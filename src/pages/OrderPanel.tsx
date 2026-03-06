@@ -1,9 +1,13 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Card, Table, Tag, Select, Drawer, Statistic, Row, Col, Space, Button, Input, Upload, message, Spin, Tooltip } from 'antd';
+import {
+  Card, Table, Tag, Select, Drawer, Statistic, Row, Col, Space, Button, Input, Upload, message, Spin,
+  Modal,
+} from 'antd';
 import {
   ShoppingCartOutlined, ClockCircleOutlined, AppstoreOutlined, UploadOutlined,
   CheckCircleOutlined, FileImageOutlined, FilePdfOutlined, FileExcelOutlined,
-  FileTextOutlined, DeleteOutlined,
+  FileTextOutlined, DeleteOutlined, AuditOutlined, SendOutlined,
+  PaperClipOutlined,
 } from '@ant-design/icons';
 import {
   getOrders, getCustomers, getTickets, getResults, getTasks, uploadVoucher, updateOrder,
@@ -13,8 +17,7 @@ import { AIAvatar } from '../components/AIAvatar';
 import { AIResultPopover } from '../components/AIResultPopover';
 import { AIFloatingButton } from '../components/AIFloatingButton';
 import { CustomerHoverCard } from '../components/CustomerHoverCard';
-import { AIEmployeeCard } from '../components/AIEmployeeCard';
-import { useAITriggers } from '../components/AITriggers';
+import { AITriggerWrapper } from '../components/AITriggers';
 
 const STATUS_MAP: Record<string, { color: string; label: string }> = {
   pending: { color: 'orange', label: '待付款' },
@@ -56,6 +59,13 @@ function getFileType(name: string): string {
   return 'text';
 }
 
+interface ChatMsg {
+  role: 'user' | 'ai';
+  text: string;
+  files?: { name: string; size: number }[];
+  analysis?: Record<string, unknown>;
+}
+
 export default function OrderPanel() {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
@@ -66,11 +76,16 @@ export default function OrderPanel() {
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const [selectedOrder, setSelectedOrder] = useState<OrderRow | null>(null);
 
-  // Upload state
-  const [voucherInput, setVoucherInput] = useState('');
+  // File upload state
   const [uploadedFiles, setUploadedFiles] = useState<{ name: string; size: number; type: string }[]>([]);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [inputMode, setInputMode] = useState<'file' | 'text'>('file');
+
+  // AI chat modal state
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatFiles, setChatFiles] = useState<{ name: string; size: number }[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatResult, setChatResult] = useState<Record<string, unknown> | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -85,13 +100,6 @@ export default function OrderPanel() {
     setAiResults(results);
     setLoading(false);
   };
-
-  const { AITriggerWrapper } = useAITriggers(
-    allTasks,
-    (action, ctx) => {
-      message.info(`AI 操作: ${action}${ctx.selectedText ? ` — "${ctx.selectedText.slice(0, 30)}..."` : ''}`);
-    },
-  );
 
   useEffect(() => { load(); }, []);
 
@@ -120,26 +128,109 @@ export default function OrderPanel() {
     return map;
   }, [aiResults]);
 
-  const handleUploadVoucher = async () => {
+  // Start AI proofreading chat
+  const handleStartChat = () => {
     if (!selectedOrder) return;
-    const text = inputMode === 'text'
-      ? voucherInput.trim()
-      : uploadedFiles.length > 0
-        ? `[文件上传] ${uploadedFiles.map(f => `${f.name} (${(f.size / 1024).toFixed(1)}KB)`).join(', ')}\n\n(Demo: 文件内容已模拟提取为文本进行分析)\n\nSWIFT MT103\nSender: ${selectedOrder.customer_name}\nAmount: ${selectedOrder.currency} ${selectedOrder.amount}\nReference: ${selectedOrder.id}\nDate: ${new Date().toISOString().split('T')[0]}`
-        : '';
-    if (!text) return;
+    const filesSummary = uploadedFiles.map(f => f.name).join(', ');
+    setChatMessages([{
+      role: 'user',
+      text: `请校对这笔订单的转账凭证。\n订单: ${selectedOrder.id}\n金额: ${formatAmount(selectedOrder.amount, selectedOrder.currency)}\n客户: ${selectedOrder.customer_name}`,
+      files: uploadedFiles.map(f => ({ name: f.name, size: f.size })),
+    }]);
+    setChatResult(null);
+    setChatInput('');
+    setChatFiles([]);
+    setChatOpen(true);
 
-    setAnalyzing(true);
-    try {
-      await uploadVoucher(selectedOrder.id, text);
-      message.success('凭证分析完成');
+    // Auto-trigger AI analysis
+    setChatLoading(true);
+    const voucherText = `[文件上传] ${filesSummary}\n\n(Demo: 文件内容已模拟提取)\n\nSWIFT MT103\nSender: ${selectedOrder.customer_name}\nAmount: ${selectedOrder.currency} ${selectedOrder.amount}\nReference: ${selectedOrder.id}\nDate: ${new Date().toISOString().split('T')[0]}`;
+
+    uploadVoucher(selectedOrder.id, voucherText).then(async () => {
       await load();
       const updated = (await getOrders()).find(o => o.id === selectedOrder.id);
-      if (updated) setSelectedOrder(updated);
+      if (updated) {
+        setSelectedOrder(updated);
+        const analysis = parseAnalysis(updated.voucher_analysis);
+        if (analysis) {
+          setChatResult(analysis);
+          setChatMessages(prev => [...prev, {
+            role: 'ai',
+            text: buildAnalysisText(analysis),
+            analysis,
+          }]);
+        }
+      }
+      setChatLoading(false);
+    }).catch(() => {
+      setChatMessages(prev => [...prev, { role: 'ai', text: '分析出错，请重试。' }]);
+      setChatLoading(false);
+    });
+  };
+
+  // Send follow-up message in chat
+  const handleChatSend = async () => {
+    if (!chatInput.trim() && chatFiles.length === 0) return;
+    if (!selectedOrder) return;
+
+    const userMsg: ChatMsg = {
+      role: 'user',
+      text: chatInput.trim(),
+      files: chatFiles.length > 0 ? [...chatFiles] : undefined,
+    };
+    setChatMessages(prev => [...prev, userMsg]);
+    setChatInput('');
+    setChatFiles([]);
+    setChatLoading(true);
+
+    // If new files attached, re-analyze with additional context
+    const hasNewFiles = userMsg.files && userMsg.files.length > 0;
+    const fileContext = hasNewFiles
+      ? `\n[追加文件] ${userMsg.files!.map(f => f.name).join(', ')}`
+      : '';
+
+    try {
+      const voucherText = `${selectedOrder.voucher_text || ''}\n\n[追加对话] ${userMsg.text}${fileContext}`;
+      await uploadVoucher(selectedOrder.id, voucherText);
+      await load();
+      const updated = (await getOrders()).find(o => o.id === selectedOrder.id);
+      if (updated) {
+        setSelectedOrder(updated);
+        const analysis = parseAnalysis(updated.voucher_analysis);
+        if (analysis) {
+          setChatResult(analysis);
+          setChatMessages(prev => [...prev, {
+            role: 'ai',
+            text: buildAnalysisText(analysis),
+            analysis,
+          }]);
+        } else {
+          setChatMessages(prev => [...prev, {
+            role: 'ai',
+            text: '已收到补充信息，核对结果未变化。如需进一步确认请继续提问。',
+          }]);
+        }
+      }
     } catch {
-      message.error('凭证分析失败');
+      setChatMessages(prev => [...prev, { role: 'ai', text: '处理出错，请重试。' }]);
     }
-    setAnalyzing(false);
+    setChatLoading(false);
+  };
+
+  // Apply AI result to order
+  const handleApplyResult = async () => {
+    if (!selectedOrder || !chatResult) return;
+    const match = chatResult.match as boolean | undefined;
+    if (match) {
+      await updateOrder(selectedOrder.id, { status: 'paid' } as any);
+      message.success('已确认付款，订单标记为已付');
+    } else {
+      message.info('结果已标记，请人工复核差异项');
+    }
+    setChatOpen(false);
+    await load();
+    const updated = (await getOrders()).find(o => o.id === selectedOrder.id);
+    if (updated) setSelectedOrder(updated);
   };
 
   const handleMarkPaid = async (orderId: string) => {
@@ -151,6 +242,8 @@ export default function OrderPanel() {
     else setSelectedOrder(null);
   };
 
+  const voucherTask = allTasks.find(t => t.id === 'task-voucher');
+
   const columns = [
     {
       title: '单号', dataIndex: 'id', key: 'id', width: 120,
@@ -158,9 +251,7 @@ export default function OrderPanel() {
         <a onClick={(e) => {
           e.stopPropagation();
           setSelectedOrder(record);
-          setVoucherInput('');
           setUploadedFiles([]);
-          setInputMode('file');
         }} style={{ fontWeight: 500 }}>
           {v}
         </a>
@@ -201,14 +292,10 @@ export default function OrderPanel() {
       title: '凭证', key: 'voucher', width: 80, align: 'center' as const,
       render: (_: unknown, r: OrderRow) => {
         if (r.status !== 'pending' && !r.voucher_text) return null;
-
         const hasVoucher = !!r.voucher_text;
-        if (!hasVoucher) {
-          return <span style={{ color: '#d9d9d9', fontSize: 11 }}>{'\u2014'}</span>;
-        }
+        if (!hasVoucher) return <span style={{ color: '#d9d9d9', fontSize: 11 }}>{'\u2014'}</span>;
 
         const orderResults = resultsByOrder.get(r.id) || [];
-        const voucherTask = allTasks.find(t => t.id === 'task-voucher');
         const analysis = parseAnalysis(r.voucher_analysis);
         const match = analysis?.match as boolean | undefined;
 
@@ -220,9 +307,8 @@ export default function OrderPanel() {
               <span className="ai-cell-wrapper" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
                 <AIAvatar
                   avatar={voucherTask?.avatar || '\u{1F4B0}'}
-                  color={voucherTask?.avatar_color || '#faad14'}
+                  color={match === false ? '#8b5cf6' : (voucherTask?.avatar_color || '#faad14')}
                   size={22}
-                  style={{ opacity: match === false ? 1 : 0.7 }}
                 />
                 {r.status === 'paid' && <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 10 }} />}
               </span>
@@ -230,6 +316,7 @@ export default function OrderPanel() {
           );
         }
 
+        // Has voucher but no AI results yet — show dim avatar
         return (
           <span style={{ cursor: 'default' }}>
             <AIAvatar
@@ -251,9 +338,12 @@ export default function OrderPanel() {
 
   const analysis = selectedOrder ? parseAnalysis(selectedOrder.voucher_analysis) : null;
   const selectedResults = selectedOrder ? (resultsByOrder.get(selectedOrder.id) || []) : [];
+  const hasAIResult = !!analysis || selectedResults.length > 0;
 
   return (
-    <AITriggerWrapper style={{ padding: 24 }}>
+    <AITriggerWrapper tasks={allTasks} onAction={(action, ctx) => {
+      message.info(`AI 操作: ${action}${ctx.selectedText ? ` — "${ctx.selectedText.slice(0, 30)}..."` : ''}`);
+    }} style={{ padding: 24 }}>
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ margin: 0 }}>
           <ShoppingCartOutlined /> 订单管理
@@ -274,7 +364,7 @@ export default function OrderPanel() {
       </div>
 
       <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>
-        点击订单查看详情。待付款订单可上传转账凭证（PDF/图片/Excel），财务核对员自动分析匹配度。悬浮头像查看详情，可采纳/拒绝/编辑/对话。
+        点击订单查看详情。上传转账凭证后点击「AI 校对」，通过对话式交互完成凭证核对。
       </div>
 
       {/* Summary cards */}
@@ -302,7 +392,7 @@ export default function OrderPanel() {
             <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>币种分布</div>
             <Space size={4}>
               {currencyBreakdown.map(([cur, count]) => (
-                <Tag key={cur} icon={<AppstoreOutlined />}>{cur}: {count}</Tag>
+                <Tag key={cur} icon={<AppstoreOutlined />}>{cur}: {String(count)}</Tag>
               ))}
             </Space>
           </Card>
@@ -320,236 +410,380 @@ export default function OrderPanel() {
         onRow={(record) => ({
           onClick: () => {
             setSelectedOrder(record);
-            setVoucherInput('');
             setUploadedFiles([]);
-            setInputMode('file');
           },
           style: { cursor: 'pointer' },
         })}
       />
 
-      {/* Detail drawer — wider, two-column layout */}
+      {/* Detail drawer */}
       <Drawer
         title="订单详情"
         open={!!selectedOrder}
         onClose={() => setSelectedOrder(null)}
-        width={760}
+        width={640}
       >
         {selectedOrder && (
-          <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
-            {/* Left column: order info + upload */}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Card size="small" style={{ marginBottom: 12 }}>
-                <p><strong>客户:</strong> {selectedOrder.customer_name}</p>
-                <p><strong>金额:</strong> {formatAmount(selectedOrder.amount, selectedOrder.currency)}</p>
-                <p><strong>币种:</strong> {selectedOrder.currency}</p>
-                <p>
-                  <strong>状态:</strong>{' '}
-                  {(() => { const s = STATUS_MAP[selectedOrder.status] || { color: 'default', label: selectedOrder.status }; return <Tag color={s.color}>{s.label}</Tag>; })()}
-                </p>
-                <p><strong>创建时间:</strong> {selectedOrder.created_at}</p>
-              </Card>
+          <div style={{ position: 'relative' }}>
+            {/* Order info */}
+            <Card size="small" style={{ marginBottom: 12 }}>
+              <Row gutter={16}>
+                <Col span={12}><p style={{ margin: '4px 0' }}><strong>客户:</strong> {selectedOrder.customer_name}</p></Col>
+                <Col span={12}><p style={{ margin: '4px 0' }}><strong>单号:</strong> {selectedOrder.id}</p></Col>
+                <Col span={12}><p style={{ margin: '4px 0' }}><strong>金额:</strong> {formatAmount(selectedOrder.amount, selectedOrder.currency)}</p></Col>
+                <Col span={12}><p style={{ margin: '4px 0' }}><strong>币种:</strong> {selectedOrder.currency}</p></Col>
+                <Col span={12}>
+                  <p style={{ margin: '4px 0' }}>
+                    <strong>状态:</strong>{' '}
+                    {(() => { const s = STATUS_MAP[selectedOrder.status] || { color: 'default', label: selectedOrder.status }; return <Tag color={s.color}>{s.label}</Tag>; })()}
+                  </p>
+                </Col>
+                <Col span={12}><p style={{ margin: '4px 0' }}><strong>创建:</strong> {selectedOrder.created_at}</p></Col>
+              </Row>
+            </Card>
 
-              {/* Voucher upload — file + text modes */}
-              {selectedOrder.status === 'pending' && !selectedOrder.voucher_text && (
-                <Card size="small"
-                  title={
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <Space><UploadOutlined /><span>上传转账凭证</span></Space>
-                      <Space size={0}>
-                        <Button type={inputMode === 'file' ? 'primary' : 'text'} size="small"
-                          style={inputMode === 'file' ? { background: '#faad14', borderColor: '#faad14', fontSize: 11 } : { fontSize: 11 }}
-                          onClick={() => setInputMode('file')}>
-                          文件上传
-                        </Button>
-                        <Button type={inputMode === 'text' ? 'primary' : 'text'} size="small"
-                          style={inputMode === 'text' ? { background: '#faad14', borderColor: '#faad14', fontSize: 11 } : { fontSize: 11 }}
-                          onClick={() => setInputMode('text')}>
-                          粘贴文本
-                        </Button>
-                      </Space>
-                    </div>
-                  }
-                  style={{ marginBottom: 12, borderColor: '#faad14', borderStyle: 'dashed' }}
+            {/* File upload area — always visible for pending orders */}
+            {selectedOrder.status === 'pending' && !selectedOrder.voucher_text && (
+              <Card size="small"
+                title={<Space><UploadOutlined /> 上传转账凭证</Space>}
+                style={{ marginBottom: 12, borderColor: '#faad14', borderStyle: 'dashed' }}
+              >
+                <Upload.Dragger
+                  multiple
+                  accept=".pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp,.xls,.xlsx,.csv,.txt,.doc,.docx"
+                  beforeUpload={(file) => {
+                    setUploadedFiles(prev => [...prev, { name: file.name, size: file.size, type: file.type }]);
+                    return false;
+                  }}
+                  showUploadList={false}
                 >
-                  {inputMode === 'file' ? (
-                    <>
-                      <Upload.Dragger
-                        multiple
-                        accept=".pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp,.xls,.xlsx,.csv,.txt,.doc,.docx"
-                        beforeUpload={(file) => {
-                          setUploadedFiles(prev => [...prev, { name: file.name, size: file.size, type: file.type }]);
-                          return false;
-                        }}
-                        showUploadList={false}
-                        style={{ marginBottom: uploadedFiles.length > 0 ? 8 : 0 }}
-                      >
-                        <p style={{ marginBottom: 4 }}>
-                          <UploadOutlined style={{ fontSize: 24, color: '#faad14' }} />
-                        </p>
-                        <p style={{ fontSize: 12, color: '#666', margin: 0 }}>
-                          拖拽文件到此处，或点击选择
-                        </p>
-                        <p style={{ fontSize: 11, color: '#999', margin: '4px 0 0' }}>
-                          支持 PDF、图片、Excel、Word、文本文件
-                        </p>
-                      </Upload.Dragger>
+                  <p style={{ marginBottom: 4 }}>
+                    <UploadOutlined style={{ fontSize: 24, color: '#faad14' }} />
+                  </p>
+                  <p style={{ fontSize: 12, color: '#666', margin: 0 }}>
+                    拖拽文件到此处，或点击选择（支持多文件）
+                  </p>
+                  <p style={{ fontSize: 11, color: '#999', margin: '4px 0 0' }}>
+                    PDF、图片、Excel、Word、文本文件
+                  </p>
+                </Upload.Dragger>
 
-                      {/* Uploaded file list */}
-                      {uploadedFiles.length > 0 && (
-                        <div style={{ marginTop: 8 }}>
-                          {uploadedFiles.map((f, i) => (
-                            <div key={i} style={{
-                              display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px',
-                              background: '#fafafa', borderRadius: 4, marginBottom: 4,
-                              fontSize: 12,
-                            }}>
-                              {FILE_ICON_MAP[getFileType(f.name)] || FILE_ICON_MAP.text}
-                              <span style={{ flex: 1 }}>{f.name}</span>
-                              <span style={{ color: '#999', fontSize: 11 }}>{(f.size / 1024).toFixed(1)}KB</span>
-                              <DeleteOutlined
-                                style={{ color: '#999', cursor: 'pointer', fontSize: 11 }}
-                                onClick={() => setUploadedFiles(prev => prev.filter((_, j) => j !== i))}
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <Input.TextArea
-                      rows={6}
-                      placeholder={'SWIFT Transfer Confirmation\nSender: ...\nAmount: ...\nReference: ...'}
-                      value={voucherInput}
-                      onChange={e => setVoucherInput(e.target.value)}
-                      style={{ fontFamily: 'monospace', fontSize: 12 }}
-                    />
-                  )}
-
-                  <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Button type="primary" icon={<UploadOutlined />}
-                      onClick={handleUploadVoucher} loading={analyzing}
-                      disabled={inputMode === 'text' ? !voucherInput.trim() : uploadedFiles.length === 0}
-                      style={{ background: '#faad14', borderColor: '#faad14' }}
-                    >
-                      {analyzing ? '分析中...' : '上传并分析'}
-                    </Button>
-                    {analyzing && (
-                      <>
-                        <AIAvatar avatar={'\u{1F4B0}'} color="#faad14" size={20} />
-                        <span style={{ fontSize: 12, color: '#faad14' }}>财务核对员正在分析...</span>
-                        <Spin size="small" />
-                      </>
-                    )}
+                {/* Uploaded file list */}
+                {uploadedFiles.length > 0 && (
+                  <div style={{ marginTop: 8 }}>
+                    {uploadedFiles.map((f, i) => (
+                      <div key={i} style={{
+                        display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px',
+                        background: '#fafafa', borderRadius: 4, marginBottom: 4, fontSize: 12,
+                      }}>
+                        {FILE_ICON_MAP[getFileType(f.name)] || FILE_ICON_MAP.text}
+                        <span style={{ flex: 1 }}>{f.name}</span>
+                        <span style={{ color: '#999', fontSize: 11 }}>{(f.size / 1024).toFixed(1)}KB</span>
+                        <DeleteOutlined
+                          style={{ color: '#999', cursor: 'pointer', fontSize: 11 }}
+                          onClick={() => setUploadedFiles(prev => prev.filter((_, j) => j !== i))}
+                        />
+                      </div>
+                    ))}
                   </div>
-                </Card>
-              )}
+                )}
 
-              {/* Voucher text display */}
-              {selectedOrder.voucher_text && (
-                <Card size="small" title="凭证内容" style={{ marginBottom: 12 }}>
-                  <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto' }}>
-                    {selectedOrder.voucher_text}
-                  </pre>
-                </Card>
-              )}
-
-              {/* Waiting state */}
-              {selectedOrder.voucher_text && !analysis && selectedOrder.status === 'pending' && (
-                <Card size="small" style={{ marginBottom: 12 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <AIAvatar avatar={'\u{1F4B0}'} color="#faad14" size={24} />
-                    <span style={{ color: '#999', fontSize: 12 }}>凭证已上传，等待财务核对员分析...</span>
-                  </div>
-                </Card>
-              )}
-            </div>
-
-            {/* Right column: AI employee card — analysis + conversation */}
-            {(analysis || selectedResults.length > 0) && (() => {
-              const voucherTask = allTasks.find(t => t.id === 'task-voucher');
-              const match = analysis?.match as boolean | undefined;
-              return (
-                <div style={{ width: 360, flexShrink: 0 }}>
-                  <AIEmployeeCard
-                    avatar={voucherTask?.avatar || '\u{1F4B0}'}
-                    color={voucherTask?.avatar_color || '#faad14'}
-                    name={voucherTask?.name || '财务核对员'}
-                    description={analysis ? (match ? '匹配' : '需复核') + ' \u00B7 置信度 ' + String(analysis.confidence || '\u2014') + '%' : '等待分析...'}
-                    results={selectedResults}
-                    tasks={allTasks}
-                    onRefresh={load}
-                    context={`订单: ${selectedOrder.id}\n金额: ${formatAmount(selectedOrder.amount, selectedOrder.currency)}\n客户: ${selectedOrder.customer_name}`}
-                    chatPlaceholder="如：核实付款人名称 / 金额差多少..."
-                    extraActions={selectedOrder.status === 'pending' && analysis ? (
-                      match ? (
-                        <Button type="primary" size="small" icon={<CheckCircleOutlined />}
-                          onClick={() => handleMarkPaid(selectedOrder.id)}
-                          style={{ background: '#52c41a', borderColor: '#52c41a', width: '100%' }}>
-                          确认付款，标记为已付
-                        </Button>
-                      ) : (
-                        <div>
-                          <Button type="primary" size="small"
-                            onClick={() => handleMarkPaid(selectedOrder.id)}
-                            style={{ background: '#faad14', borderColor: '#faad14', width: '100%', marginBottom: 4 }}>
-                            手动确认付款
-                          </Button>
-                          <div style={{ fontSize: 11, color: '#999', textAlign: 'center' }}>凭证存在差异，请人工复核后再确认</div>
-                        </div>
-                      )
-                    ) : undefined}
+                {/* AI Proofreading trigger */}
+                <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Button
+                    type="primary"
+                    icon={<AuditOutlined />}
+                    onClick={handleStartChat}
+                    disabled={uploadedFiles.length === 0}
+                    style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}
                   >
-                    {analysis && (
-                      <>
-                        <div style={{
-                          padding: '8px 12px', borderRadius: 6, marginBottom: 8,
-                          background: match ? '#f6ffed' : '#fff7e6',
-                          border: match ? '1px solid #b7eb8f' : '1px solid #ffe58f',
-                        }}>
-                          <Tag color={match ? 'green' : 'orange'} style={{ marginRight: 8 }}>
-                            {match ? '匹配' : '需复核'}
-                          </Tag>
-                          <span style={{ fontWeight: 600 }}>
-                            置信度 {String(analysis.confidence || '\u2014')}%
-                          </span>
-                        </div>
-                        <div style={{
-                          background: '#faf8ff', borderLeft: '2px solid #faad14',
-                          padding: '6px 10px', borderRadius: '0 6px 6px 0',
-                          marginBottom: 8, fontSize: 12, lineHeight: 1.8, color: '#444',
-                        }}>
-                          {analysis.voucher_amount && <p style={{ margin: '2px 0' }}><strong>凭证金额:</strong> {String(analysis.voucher_amount)}</p>}
-                          {analysis.voucher_payer && <p style={{ margin: '2px 0' }}><strong>付款方:</strong> {String(analysis.voucher_payer)}</p>}
-                          {Array.isArray(analysis.discrepancies) && (analysis.discrepancies as string[]).length > 0 && (
-                            <div style={{ margin: '2px 0' }}>
-                              <strong>差异项:</strong>
-                              <ul style={{ margin: '2px 0', paddingLeft: 16 }}>
-                                {(analysis.discrepancies as string[]).map((d: string, i: number) => (
-                                  <li key={i} style={{ color: '#fa541c' }}>{d}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                          {analysis.recommendation && (
-                            <div style={{
-                              marginTop: 6, padding: '4px 8px', borderRadius: 4,
-                              background: '#f5f0ff', borderLeft: '3px solid #8b5cf6',
-                              fontSize: 11, color: '#555',
-                            }}>
-                              {String(analysis.recommendation)}
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </AIEmployeeCard>
+                    AI 校对
+                  </Button>
+                  <span style={{ fontSize: 11, color: '#999' }}>
+                    上传文件后点击，AI 将分析凭证与订单的匹配度
+                  </span>
                 </div>
-              );
-            })()}
+              </Card>
+            )}
+
+            {/* Voucher already uploaded — show content + re-chat */}
+            {selectedOrder.voucher_text && (
+              <Card size="small" title="凭证内容" style={{ marginBottom: 12 }}
+                extra={selectedOrder.status === 'pending' && (
+                  <Button size="small" type="link" icon={<AuditOutlined />}
+                    onClick={() => {
+                      // Re-open chat with existing data
+                      const existingAnalysis = parseAnalysis(selectedOrder.voucher_analysis);
+                      const msgs: ChatMsg[] = [
+                        { role: 'user', text: '请校对这笔订单的转账凭证。' },
+                      ];
+                      if (existingAnalysis) {
+                        msgs.push({ role: 'ai', text: buildAnalysisText(existingAnalysis), analysis: existingAnalysis });
+                        setChatResult(existingAnalysis);
+                      }
+                      setChatMessages(msgs);
+                      setChatInput('');
+                      setChatFiles([]);
+                      setChatOpen(true);
+                    }}
+                    style={{ color: '#8b5cf6' }}>
+                    继续校对
+                  </Button>
+                )}
+              >
+                <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, maxHeight: 150, overflow: 'auto' }}>
+                  {selectedOrder.voucher_text}
+                </pre>
+              </Card>
+            )}
+
+            {/* AI analysis result summary — shown after results applied */}
+            {analysis && (
+              <Card size="small" style={{
+                marginBottom: 12,
+                background: '#faf8ff',
+                borderColor: '#e8dcff',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <Tag color={analysis.match ? 'green' : 'orange'}>
+                    {analysis.match ? '匹配' : '需复核'}
+                  </Tag>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>
+                    置信度 {String(analysis.confidence || '\u2014')}%
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, lineHeight: 1.8, color: '#444' }}>
+                  {analysis.voucher_amount && <p style={{ margin: '2px 0' }}><strong>凭证金额:</strong> {String(analysis.voucher_amount)}</p>}
+                  {analysis.voucher_payer && <p style={{ margin: '2px 0' }}><strong>付款方:</strong> {String(analysis.voucher_payer)}</p>}
+                  {Array.isArray(analysis.discrepancies) && (analysis.discrepancies as string[]).length > 0 && (
+                    <div style={{ margin: '2px 0' }}>
+                      <strong>差异项:</strong>
+                      <ul style={{ margin: '2px 0', paddingLeft: 16 }}>
+                        {(analysis.discrepancies as string[]).map((d: string, i: number) => (
+                          <li key={i} style={{ color: '#fa541c' }}>{d}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {analysis.recommendation && (
+                    <div style={{
+                      marginTop: 6, padding: '4px 8px', borderRadius: 4,
+                      background: '#f5f0ff', borderLeft: '3px solid #8b5cf6',
+                      fontSize: 11, color: '#555',
+                    }}>
+                      {String(analysis.recommendation)}
+                    </div>
+                  )}
+                </div>
+
+                {/* Action buttons */}
+                {selectedOrder.status === 'pending' && (
+                  <div style={{ marginTop: 10 }}>
+                    {analysis.match ? (
+                      <Button type="primary" size="small" icon={<CheckCircleOutlined />}
+                        onClick={() => handleMarkPaid(selectedOrder.id)}
+                        style={{ background: '#52c41a', borderColor: '#52c41a', width: '100%' }}>
+                        确认付款，标记为已付
+                      </Button>
+                    ) : (
+                      <Space style={{ width: '100%' }} direction="vertical" size={4}>
+                        <Button type="primary" size="small"
+                          onClick={() => handleMarkPaid(selectedOrder.id)}
+                          style={{ background: '#faad14', borderColor: '#faad14', width: '100%' }}>
+                          手动确认付款
+                        </Button>
+                        <div style={{ fontSize: 11, color: '#999', textAlign: 'center' }}>凭证存在差异，请人工复核后再确认</div>
+                      </Space>
+                    )}
+                  </div>
+                )}
+              </Card>
+            )}
+
+            {/* AI result popover for existing results */}
+            {selectedResults.length > 0 && !analysis && (
+              <AIResultPopover results={selectedResults} tasks={allTasks} onRefresh={load}
+                context={`订单: ${selectedOrder.id}\n金额: ${formatAmount(selectedOrder.amount, selectedOrder.currency)}`}
+                placement="bottomRight">
+                <Card size="small" style={{ marginBottom: 12, cursor: 'pointer', background: '#faf8ff', borderColor: '#e8dcff' }}>
+                  <Space>
+                    <AIAvatar avatar={voucherTask?.avatar || '\u{1F4B0}'} color="#8b5cf6" size={24} />
+                    <span style={{ fontSize: 12 }}>AI 已分析，点击查看详情</span>
+                    <Tag color="purple">{selectedResults.length} 条结果</Tag>
+                  </Space>
+                </Card>
+              </AIResultPopover>
+            )}
+
+            {/* Purple floating AI avatar — shown when AI has processed this order */}
+            {hasAIResult && (
+              <div
+                style={{
+                  position: 'absolute', top: 8, right: 8,
+                  cursor: 'pointer', zIndex: 10,
+                  animation: 'pulse 2s ease-in-out infinite',
+                }}
+                onClick={() => {
+                  if (analysis) {
+                    const msgs: ChatMsg[] = [
+                      { role: 'user', text: '请校对这笔订单的转账凭证。' },
+                      { role: 'ai', text: buildAnalysisText(analysis), analysis },
+                    ];
+                    setChatMessages(msgs);
+                    setChatResult(analysis);
+                    setChatInput('');
+                    setChatFiles([]);
+                    setChatOpen(true);
+                  }
+                }}
+                title="AI 校对结果 — 点击查看对话"
+              >
+                <AIAvatar
+                  avatar={voucherTask?.avatar || '\u{1F4B0}'}
+                  color="#8b5cf6"
+                  size={32}
+                  style={{ boxShadow: '0 2px 8px rgba(139,92,246,0.3)' }}
+                />
+              </div>
+            )}
           </div>
         )}
       </Drawer>
+
+      {/* AI Chat Modal — proofreading conversation */}
+      <Modal
+        title={
+          <Space>
+            <AIAvatar avatar={voucherTask?.avatar || '\u{1F4B0}'} color="#8b5cf6" size={28} />
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>{voucherTask?.name || '财务核对员'}</div>
+              <div style={{ fontSize: 11, color: '#999', fontWeight: 400 }}>AI 凭证校对</div>
+            </div>
+          </Space>
+        }
+        open={chatOpen}
+        onCancel={() => setChatOpen(false)}
+        footer={null}
+        width={560}
+        styles={{ body: { padding: 0 } }}
+      >
+        {/* Messages area */}
+        <div style={{
+          height: 400, overflow: 'auto', padding: 16,
+          background: '#fafafa',
+        }}>
+          {chatMessages.map((msg, i) => (
+            <div key={i} style={{
+              display: 'flex',
+              justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
+              marginBottom: 12,
+            }}>
+              {msg.role === 'ai' && (
+                <AIAvatar avatar={voucherTask?.avatar || '\u{1F4B0}'} color="#8b5cf6" size={28}
+                  style={{ marginRight: 8, flexShrink: 0, marginTop: 4 }} />
+              )}
+              <div style={{
+                maxWidth: '80%',
+                padding: '10px 14px',
+                borderRadius: msg.role === 'user' ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
+                background: msg.role === 'user' ? '#e8dcff' : '#fff',
+                border: msg.role === 'ai' ? '1px solid #e8dcff' : 'none',
+                fontSize: 13, lineHeight: 1.6,
+              }}>
+                {/* File attachments */}
+                {msg.files && msg.files.length > 0 && (
+                  <div style={{ marginBottom: 6 }}>
+                    {msg.files.map((f, j) => (
+                      <Tag key={j} icon={FILE_ICON_MAP[getFileType(f.name)] || FILE_ICON_MAP.text}
+                        style={{ fontSize: 11, marginBottom: 2 }}>
+                        {f.name}
+                      </Tag>
+                    ))}
+                  </div>
+                )}
+                <div style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</div>
+
+                {/* Apply button on AI analysis messages */}
+                {msg.analysis && selectedOrder?.status === 'pending' && (
+                  <div style={{ marginTop: 8, borderTop: '1px solid #f0ecff', paddingTop: 8 }}>
+                    <Button
+                      type="primary" size="small"
+                      icon={<CheckCircleOutlined />}
+                      onClick={handleApplyResult}
+                      style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}
+                    >
+                      应用结果
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {chatLoading && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <AIAvatar avatar={voucherTask?.avatar || '\u{1F4B0}'} color="#8b5cf6" size={28} />
+              <div style={{
+                padding: '10px 14px', borderRadius: '12px 12px 12px 2px',
+                background: '#fff', border: '1px solid #e8dcff',
+              }}>
+                <Spin size="small" /> <span style={{ fontSize: 12, color: '#999', marginLeft: 6 }}>分析中...</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Chat input bar with file attachment */}
+        <div style={{
+          padding: '12px 16px', borderTop: '1px solid #f0f0f0',
+          background: '#fff',
+        }}>
+          {/* Attached files in chat */}
+          {chatFiles.length > 0 && (
+            <div style={{ marginBottom: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {chatFiles.map((f, i) => (
+                <Tag key={i} closable onClose={() => setChatFiles(prev => prev.filter((_, j) => j !== i))}
+                  icon={FILE_ICON_MAP[getFileType(f.name)] || FILE_ICON_MAP.text}
+                  style={{ fontSize: 11 }}>
+                  {f.name}
+                </Tag>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+            <Upload
+              multiple
+              beforeUpload={(file) => {
+                setChatFiles(prev => [...prev, { name: file.name, size: file.size }]);
+                return false;
+              }}
+              showUploadList={false}
+            >
+              <Button icon={<PaperClipOutlined />} size="small" type="text"
+                style={{ color: '#999' }} title="添加附件" />
+            </Upload>
+            <Input.TextArea
+              value={chatInput}
+              onChange={e => setChatInput(e.target.value)}
+              placeholder="输入补充信息或追问..."
+              autoSize={{ minRows: 1, maxRows: 3 }}
+              style={{ flex: 1, fontSize: 13 }}
+              onPressEnter={(e) => {
+                if (!e.shiftKey) {
+                  e.preventDefault();
+                  handleChatSend();
+                }
+              }}
+            />
+            <Button
+              type="primary" icon={<SendOutlined />} size="small"
+              onClick={handleChatSend}
+              disabled={chatLoading || (!chatInput.trim() && chatFiles.length === 0)}
+              style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}
+            />
+          </div>
+        </div>
+      </Modal>
 
       {/* AI Floating Button */}
       <AIFloatingButton
@@ -560,4 +794,19 @@ export default function OrderPanel() {
       />
     </AITriggerWrapper>
   );
+}
+
+function buildAnalysisText(analysis: Record<string, unknown>): string {
+  const match = analysis.match as boolean | undefined;
+  const lines: string[] = [];
+  lines.push(match ? '校对结果: 匹配' : '校对结果: 需复核');
+  lines.push(`置信度: ${String(analysis.confidence || '-')}%`);
+  if (analysis.voucher_amount) lines.push(`凭证金额: ${String(analysis.voucher_amount)}`);
+  if (analysis.voucher_payer) lines.push(`付款方: ${String(analysis.voucher_payer)}`);
+  if (Array.isArray(analysis.discrepancies) && analysis.discrepancies.length > 0) {
+    lines.push(`差异项:`);
+    for (const d of analysis.discrepancies) lines.push(`  - ${String(d)}`);
+  }
+  if (analysis.recommendation) lines.push(`\n建议: ${String(analysis.recommendation)}`);
+  return lines.join('\n');
 }
