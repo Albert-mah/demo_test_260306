@@ -8,7 +8,7 @@ import {
   ArrowRightOutlined, SettingOutlined,
 } from '@ant-design/icons';
 import { getTasks, type AITask } from '../api';
-import { AITeamAvatars } from './AIAvatar';
+import { AITeamAvatars, AIFusedAvatar, AIParallelAvatars } from './AIAvatar';
 import { AITaskSelector, type TaskConfig } from './AITaskSelector';
 
 interface RuleItem {
@@ -16,6 +16,7 @@ interface RuleItem {
   trigger: string;
   triggerField?: string;
   taskConfigs: TaskConfig[];
+  mode?: 'collaborative' | 'parallel';
   postAction: string;
   postField?: string;
   enabled: boolean;
@@ -92,7 +93,7 @@ export function RuleConfigPanel({
               { taskId: 'task-priority', inputFields: ['content', 'category'], outputFields: ['priority'] },
               { taskId: 'task-reply-gen', inputFields: ['content', 'customer_lang', 'knowledge_context'], outputFields: ['reply_draft'] },
             ],
-            postAction: 'show_bubble', enabled: true,
+            mode: 'collaborative', postAction: 'show_bubble', enabled: true,
           },
           {
             id: 'rule-2', trigger: 'field_change', triggerField: 'status',
@@ -182,7 +183,9 @@ export function RuleConfigPanel({
                   />
                 )}
                 {rule.taskConfigs.length > 1 && (
-                  <Tag color="purple" style={{ fontSize: 10 }}>组合 {rule.taskConfigs.length}</Tag>
+                  <Tag color={(rule.mode || 'collaborative') === 'collaborative' ? 'purple' : 'blue'} style={{ fontSize: 10 }}>
+                    {(rule.mode || 'collaborative') === 'collaborative' ? '协作' : '并发'} {rule.taskConfigs.length}
+                  </Tag>
                 )}
               </div>
             }
@@ -240,6 +243,40 @@ export function RuleConfigPanel({
                 onChange={configs => updateRule(rule.id, { taskConfigs: configs })}
                 compact
               />
+
+              {/* Mode selector — only show when 2+ tasks */}
+              {rule.taskConfigs.length > 1 && (() => {
+                const selectedTasks = rule.taskConfigs.map(c => tasks.find(t => t.id === c.taskId)).filter(Boolean) as AITask[];
+                return (
+                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                    {([
+                      { key: 'collaborative' as const, label: '协作', desc: '合并 Prompt → 1 次调用', color: '#8b5cf6' },
+                      { key: 'parallel' as const, label: '并发', desc: '独立调用 → 按字段回填', color: '#1677ff' },
+                    ]).map(m => {
+                      const active = (rule.mode || 'collaborative') === m.key;
+                      return (
+                        <div key={m.key}
+                          onClick={() => updateRule(rule.id, { mode: m.key })}
+                          style={{
+                            flex: 1, padding: '6px 8px', borderRadius: 6, cursor: 'pointer',
+                            border: `2px solid ${active ? m.color : '#e8e8e8'}`,
+                            background: active ? (m.key === 'collaborative' ? '#faf8ff' : '#f0f5ff') : '#fff',
+                            transition: 'all 0.2s',
+                          }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+                            {m.key === 'collaborative'
+                              ? <AIFusedAvatar members={selectedTasks.map(t => ({ avatar: t.avatar, color: t.avatar_color }))} size={20} />
+                              : <AIParallelAvatars members={selectedTasks.map(t => ({ avatar: t.avatar, color: t.avatar_color }))} size={14} />
+                            }
+                            <span style={{ fontWeight: 600, fontSize: 12, color: active ? m.color : '#333' }}>{m.label}</span>
+                          </div>
+                          <div style={{ fontSize: 10, color: '#999', lineHeight: 1.3 }}>{m.desc}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Post action */}

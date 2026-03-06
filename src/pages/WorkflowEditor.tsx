@@ -1,13 +1,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   Card, Button, Space, Tag, Select, Empty, Drawer, Form, Input, message, Popconfirm,
-  Table, Timeline, Badge,
+  Timeline, Badge,
 } from 'antd';
 import {
   PlusOutlined, ArrowLeftOutlined, ThunderboltOutlined, BranchesOutlined,
   RobotOutlined, BellOutlined, CheckCircleOutlined, ClockCircleOutlined,
   PlayCircleOutlined, DeleteOutlined, ArrowDownOutlined, ForkOutlined,
-  ReloadOutlined, EyeOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import {
   getWorkflow, getWorkflows, getTasks, createWorkflowNode, updateWorkflowNode, deleteWorkflowNode,
@@ -29,10 +29,6 @@ const NODE_TYPES = [
 ];
 
 const nodeTypeMap = Object.fromEntries(NODE_TYPES.map(n => [n.value, n]));
-const ACTION_COLORS: Record<string, string> = {
-  translate: 'blue', classify: 'purple', fill: 'cyan', extract: 'orange',
-  generate: 'green', validate: 'red', summarize: 'magenta', decide: 'gold', investigate: 'geekblue',
-};
 const EXEC_STATUS_COLORS: Record<string, string> = {
   completed: 'green', running: 'blue', failed: 'red', pending: 'default',
 };
@@ -348,11 +344,14 @@ export default function WorkflowEditor({ onBack }: { onBack: () => void }) {
                   return { taskId: id, inputFields: task?.input_fields || [], outputFields: task?.output_fields || [] };
                 })
               );
+              const selectedTasks = taskConfigs.map(c => allTasks.find(t => t.id === c.taskId)).filter(Boolean) as AITask[];
               return (
                 <Card size="small" title={<Space><RobotOutlined /> AI 任务配置</Space>}
                   style={{ marginBottom: 16 }}
                   extra={taskConfigs.length > 1 && (
-                    <Tag color="purple" style={{ fontSize: 10 }}>组合 {taskConfigs.length}</Tag>
+                    <Tag color={(config.mode || 'collaborative') === 'collaborative' ? 'purple' : 'blue'} style={{ fontSize: 10 }}>
+                      {(config.mode || 'collaborative') === 'collaborative' ? '协作模式' : '并发模式'}
+                    </Tag>
                   )}>
                   <div style={{ fontSize: 11, color: '#999', marginBottom: 8 }}>
                     选择任务并配置每个任务的输入/输出字段映射
@@ -369,6 +368,37 @@ export default function WorkflowEditor({ onBack }: { onBack: () => void }) {
                       }, null, 2));
                     }}
                   />
+
+                  {/* Mode selector — only show when 2+ tasks */}
+                  {taskConfigs.length > 1 && (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                      {([
+                        { key: 'collaborative', label: '协作', desc: '合并 Prompt → 1 次调用 → JSON 合并输出', color: '#8b5cf6' },
+                        { key: 'parallel', label: '并发', desc: `${taskConfigs.length} 次独立调用 → 各自输出 → 按字段回填`, color: '#1677ff' },
+                      ] as const).map(m => {
+                        const active = (config.mode || 'collaborative') === m.key;
+                        return (
+                          <div key={m.key}
+                            onClick={() => form.setFieldValue('config', JSON.stringify({ ...config, mode: m.key }, null, 2))}
+                            style={{
+                              flex: 1, padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
+                              border: `2px solid ${active ? m.color : '#e8e8e8'}`,
+                              background: active ? (m.key === 'collaborative' ? '#faf8ff' : '#f0f5ff') : '#fff',
+                              transition: 'all 0.2s',
+                            }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                              {m.key === 'collaborative'
+                                ? <AIFusedAvatar members={selectedTasks.map(t => ({ avatar: t.avatar, color: t.avatar_color }))} size={24} />
+                                : <AIParallelAvatars members={selectedTasks.map(t => ({ avatar: t.avatar, color: t.avatar_color }))} size={16} />
+                              }
+                              <span style={{ fontWeight: 600, fontSize: 13, color: active ? m.color : '#333' }}>{m.label}</span>
+                            </div>
+                            <div style={{ fontSize: 11, color: '#999', lineHeight: 1.4 }}>{m.desc}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </Card>
               );
             })()}

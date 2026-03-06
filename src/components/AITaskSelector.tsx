@@ -8,7 +8,6 @@
  * Each selected task shows a configurable row:
  *   [avatar name] [input fields ▼] → [output fields ▼] [x]
  */
-import { useState } from 'react';
 import { Select, Tag, Space, Button, Tooltip } from 'antd';
 import {
   DeleteOutlined, PlusOutlined, ArrowRightOutlined,
@@ -65,7 +64,7 @@ export function AITaskSelector({
   return (
     <div>
       {/* Selected task rows */}
-      {value.map((cfg, idx) => {
+      {value.map((cfg) => {
         const task = tasks.find(t => t.id === cfg.taskId);
         if (!task) return null;
         return (
