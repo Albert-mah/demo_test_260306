@@ -9,12 +9,13 @@ import {
 } from '@ant-design/icons';
 import { getTasks, type AITask } from '../api';
 import { AITeamAvatars } from './AIAvatar';
+import { AITaskSelector, type TaskConfig } from './AITaskSelector';
 
 interface RuleItem {
   id: string;
   trigger: string;
   triggerField?: string;
-  taskIds: string[];
+  taskConfigs: TaskConfig[];
   postAction: string;
   postField?: string;
   enabled: boolean;
@@ -64,11 +65,6 @@ const POST_ACTIONS = [
   { value: 'create_alert', label: '创建预警' },
 ];
 
-const ACTION_COLORS: Record<string, string> = {
-  translate: 'blue', classify: 'purple', fill: 'cyan', extract: 'orange',
-  generate: 'green', validate: 'red', summarize: 'magenta', decide: 'gold', investigate: 'geekblue',
-};
-
 export function RuleConfigPanel({
   open,
   onClose,
@@ -86,17 +82,23 @@ export function RuleConfigPanel({
   useEffect(() => {
     if (open) {
       getTasks().then(setTasks);
-      // Load mock rules — in real app, fetch from /api/rules?page_id=xxx
       if (rules.length === 0) {
         setRules([
           {
             id: 'rule-1', trigger: 'record_create',
-            taskIds: ['task-translate', 'task-classify', 'task-priority', 'task-reply-gen'],
+            taskConfigs: [
+              { taskId: 'task-translate', inputFields: ['content'], outputFields: ['language', 'translated_content'] },
+              { taskId: 'task-classify', inputFields: ['content'], outputFields: ['category'] },
+              { taskId: 'task-priority', inputFields: ['content', 'category'], outputFields: ['priority'] },
+              { taskId: 'task-reply-gen', inputFields: ['content', 'customer_lang', 'knowledge_context'], outputFields: ['reply_draft'] },
+            ],
             postAction: 'show_bubble', enabled: true,
           },
           {
             id: 'rule-2', trigger: 'field_change', triggerField: 'status',
-            taskIds: ['task-knowledge'],
+            taskConfigs: [
+              { taskId: 'task-knowledge', inputFields: ['content', 'resolution'], outputFields: ['knowledge_suggestion'] },
+            ],
             postAction: 'write_field', postField: 'knowledge_suggestions', enabled: true,
           },
         ]);
@@ -108,7 +110,7 @@ export function RuleConfigPanel({
     setRules(prev => [...prev, {
       id: `rule-${Date.now()}`,
       trigger: 'record_create',
-      taskIds: [],
+      taskConfigs: [],
       postAction: 'show_bubble',
       enabled: true,
     }]);
@@ -138,7 +140,7 @@ export function RuleConfigPanel({
       }
       open={open}
       onClose={onClose}
-      width={560}
+      width={620}
       extra={
         <Space>
           <Button size="small" onClick={addRule} icon={<PlusOutlined />}>添加规则</Button>
@@ -148,12 +150,11 @@ export function RuleConfigPanel({
       }
     >
       <div style={{ fontSize: 12, color: '#999', marginBottom: 16 }}>
-        配置本页面的 AI 联动规则。每条规则：触发条件 → 选择 AI 任务（可多选组合）→ 结果处理。
-        多个任务自动合并为一次调用，上下文默认当前页面数据。
+        每条规则：触发条件 → AI 任务（可配置输入/输出字段）→ 结果处理。前端事件和后端工作流节点使用相同的任务配置。
       </div>
 
       {rules.length === 0 ? (
-        <Empty description="暂无联动规则，点击「添加规则」配置触发条件和 AI 任务">
+        <Empty description="暂无联动规则，点击「添加规则」开始配置">
           <Button type="primary" icon={<PlusOutlined />} onClick={addRule}
             style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}>
             添加规则
@@ -174,14 +175,14 @@ export function RuleConfigPanel({
                 <span style={{ fontSize: 12, color: '#999' }}>#{idx + 1}</span>
                 <Switch size="small" checked={rule.enabled}
                   onChange={v => updateRule(rule.id, { enabled: v })} />
-                {rule.taskIds.length > 0 && (
+                {rule.taskConfigs.length > 0 && (
                   <AITeamAvatars
-                    members={rule.taskIds.map(id => tasks.find(t => t.id === id)).filter(Boolean).map(t => ({ avatar: t!.avatar, color: t!.avatar_color }))}
+                    members={rule.taskConfigs.map(c => tasks.find(t => t.id === c.taskId)).filter(Boolean).map(t => ({ avatar: t!.avatar, color: t!.avatar_color }))}
                     size={22}
                   />
                 )}
-                {rule.taskIds.length > 1 && (
-                  <Tag color="purple" style={{ fontSize: 10 }}>组合任务</Tag>
+                {rule.taskConfigs.length > 1 && (
+                  <Tag color="purple" style={{ fontSize: 10 }}>组合 {rule.taskConfigs.length}</Tag>
                 )}
               </div>
             }
@@ -191,30 +192,28 @@ export function RuleConfigPanel({
               </Popconfirm>
             }
           >
-            {/* Trigger → Task → Post-action visual flow */}
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flexWrap: 'wrap' }}>
-              {/* Trigger */}
-              <div style={{ flex: 1, minWidth: 140 }}>
-                <div style={{ fontSize: 11, color: '#999', marginBottom: 4 }}>
-                  <ThunderboltOutlined /> 触发条件
-                </div>
+            {/* Trigger */}
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: '#999', marginBottom: 4 }}>
+                <ThunderboltOutlined /> 触发条件
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <Select
-                  size="small" style={{ width: '100%' }}
+                  size="small" style={{ width: 200 }}
                   value={rule.trigger}
                   onChange={v => updateRule(rule.id, { trigger: v })}
                   options={TRIGGER_GROUPS}
                 />
                 {(rule.trigger === 'field_change' || rule.trigger === 'field_focus') && (
                   <Input
-                    size="small" placeholder="字段名"
-                    style={{ marginTop: 4 }}
+                    size="small" placeholder="字段名" style={{ width: 120 }}
                     value={rule.triggerField}
                     onChange={e => updateRule(rule.id, { triggerField: e.target.value })}
                   />
                 )}
                 {(rule.trigger === 'context_menu' || rule.trigger === 'text_select') && (
                   <Select
-                    size="small" mode="multiple" style={{ width: '100%', marginTop: 4 }}
+                    size="small" mode="multiple" style={{ width: 200 }}
                     placeholder="作用范围"
                     value={rule.triggerField?.split(',').filter(Boolean) || []}
                     onChange={v => updateRule(rule.id, { triggerField: v.join(',') })}
@@ -227,59 +226,37 @@ export function RuleConfigPanel({
                   />
                 )}
               </div>
+            </div>
 
-              <ArrowRightOutlined style={{ marginTop: 24, color: '#d9d9d9' }} />
-
-              {/* AI Tasks — multi-select = combined */}
-              <div style={{ flex: 1, minWidth: 180 }}>
-                <div style={{ fontSize: 11, color: '#999', marginBottom: 4 }}>
-                  <RobotOutlined /> AI 任务{rule.taskIds.length > 1 ? ' (组合)' : ''}
-                </div>
-                <Select
-                  size="small" style={{ width: '100%' }}
-                  mode="multiple"
-                  value={rule.taskIds}
-                  placeholder="选择 AI 任务（可多选组合）"
-                  onChange={v => updateRule(rule.id, { taskIds: v })}
-                  options={tasks.map(t => ({
-                    value: t.id,
-                    label: (
-                      <Space size={4}>
-                        <span>{t.avatar || '🤖'}</span>
-                        <span>{t.name}</span>
-                        <Tag color={ACTION_COLORS[t.action] || 'default'} style={{ fontSize: 10, lineHeight: '16px', margin: 0 }}>{t.action}</Tag>
-                      </Space>
-                    ),
-                  }))}
-                  filterOption={(input, option) =>
-                    (tasks.find(t => t.id === option?.value)?.name || '').toLowerCase().includes(input.toLowerCase())
-                  }
-                  maxTagCount={2}
-                />
-                {rule.taskIds.length > 1 && (
-                  <div style={{ fontSize: 10, color: '#8b5cf6', marginTop: 4 }}>
-                    多个任务自动合并为单次 AI 调用，共享上下文
-                  </div>
-                )}
+            {/* AI Tasks — with per-task field config */}
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: '#999', marginBottom: 4 }}>
+                <RobotOutlined /> AI 任务
+                <span style={{ color: '#bbb', marginLeft: 4 }}>输入字段 → 输出字段</span>
               </div>
+              <AITaskSelector
+                tasks={tasks}
+                value={rule.taskConfigs}
+                onChange={configs => updateRule(rule.id, { taskConfigs: configs })}
+                compact
+              />
+            </div>
 
-              <ArrowRightOutlined style={{ marginTop: 24, color: '#d9d9d9' }} />
-
-              {/* Post action */}
-              <div style={{ flex: 1, minWidth: 140 }}>
-                <div style={{ fontSize: 11, color: '#999', marginBottom: 4 }}>
-                  结果处理
-                </div>
+            {/* Post action */}
+            <div>
+              <div style={{ fontSize: 11, color: '#999', marginBottom: 4 }}>
+                <ArrowRightOutlined /> 结果处理
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <Select
-                  size="small" style={{ width: '100%' }}
+                  size="small" style={{ width: 200 }}
                   value={rule.postAction}
                   onChange={v => updateRule(rule.id, { postAction: v })}
                   options={POST_ACTIONS}
                 />
                 {rule.postAction === 'write_field' && (
                   <Input
-                    size="small" placeholder="目标字段名"
-                    style={{ marginTop: 4 }}
+                    size="small" placeholder="目标字段名" style={{ width: 150 }}
                     value={rule.postField}
                     onChange={e => updateRule(rule.id, { postField: e.target.value })}
                   />
@@ -293,8 +270,7 @@ export function RuleConfigPanel({
       <Divider style={{ margin: '16px 0' }} />
 
       <div style={{ fontSize: 11, color: '#bbb' }}>
-        提示：选择多个 AI 任务自动组合，合并为单次 AI 调用（共享上下文，节省 token）。
-        每个任务属于对应的 AI 员工，上下文默认为当前页面/记录。
+        每个任务可单独配置输入/输出字段映射。前端事件流和后端工作流节点共用相同的任务配置格式。
       </div>
     </Drawer>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   Button, Card, Tag, Space, Input, Descriptions, Divider, message, Spin,
   Row, Col, Progress, Tabs, List, Empty, Tooltip, Drawer,
@@ -6,7 +6,7 @@ import {
 import {
   ArrowLeftOutlined, ReloadOutlined, CustomerServiceOutlined,
   ShoppingCartOutlined, MailOutlined, SendOutlined,
-  SwapRightOutlined, UserOutlined, TranslationOutlined, EditOutlined,
+  SwapRightOutlined, TranslationOutlined, EditOutlined,
 } from '@ant-design/icons';
 import {
   getCustomer, getTickets, getOrders, getEmails, getResults, getTasks,
@@ -14,10 +14,10 @@ import {
   type CustomerRow, type TicketListRow, type OrderRow, type EmailRow,
   type EmailTranslationRow, type EmailSummaryRow, type AIResultRow, type AITask,
 } from '../api';
-import { AIAvatar } from '../components/AIAvatar';
+import { AIAvatar, AITeamAvatars } from '../components/AIAvatar';
 import { AIResultPopover } from '../components/AIResultPopover';
 import { AIFloatingButton } from '../components/AIFloatingButton';
-import { AIEmployeeCard, AIInsightBlock, AIField } from '../components/AIEmployeeCard';
+import { AIEmployeeCard, AIField } from '../components/AIEmployeeCard';
 import { useAITriggers } from '../components/AITriggers';
 
 const LICENSE_COLORS: Record<string, string> = {
@@ -40,8 +40,6 @@ function scoreColor(s: number) {
   return '#f5222d';
 }
 
-interface ChatMessage { role: 'user' | 'ai'; text: string }
-
 export default function CustomerDetail({
   customerId, onBack,
 }: {
@@ -62,11 +60,8 @@ export default function CustomerDetail({
   const [selectedEmail, setSelectedEmail] = useState<EmailRow | null>(null);
   const [showTranslation, setShowTranslation] = useState<Record<string, boolean>>({});
 
-  // Email Q&A state
-  const [qaInput, setQaInput] = useState('');
-  const [qaLoading, setQaLoading] = useState(false);
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  // AI 360 drawer
+  const [ai360Open, setAi360Open] = useState(false);
 
   // Email Reply state
   const [replyMode, setReplyMode] = useState(false);
@@ -123,10 +118,6 @@ export default function CustomerDetail({
 
   useEffect(() => { load(); }, [load]);
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatHistory]);
-
   // Helpers — group AI results by field
   const aiByField: Record<string, AIResultRow[]> = {};
   for (const r of aiResults) {
@@ -145,22 +136,6 @@ export default function CustomerDetail({
   // All AI results combined for floating button
   const allAiResults = [...aiResults, ...emailAiResults];
   const pendingCount = allAiResults.filter(r => r.status === 'pending').length;
-
-  // Email Q&A
-  const handleAsk = async () => {
-    if (!customer || !qaInput.trim()) return;
-    const question = qaInput.trim();
-    setChatHistory(prev => [...prev, { role: 'user', text: question }]);
-    setQaInput('');
-    setQaLoading(true);
-    try {
-      const res = await emailQA(customer.id, question);
-      setChatHistory(prev => [...prev, { role: 'ai', text: res.text }]);
-    } catch {
-      setChatHistory(prev => [...prev, { role: 'ai', text: '抱歉，查询失败，请重试。' }]);
-    }
-    setQaLoading(false);
-  };
 
   // Email Reply
   const handleReply = async () => {
@@ -452,99 +427,123 @@ export default function CustomerDetail({
 
         {/* Right: AI panel */}
         <div style={{ width: 360, flexShrink: 0 }}>
-          {/* AI Customer 360 — interactive card */}
-          <AIEmployeeCard
-            avatar="🔍"
-            color="#13c2c2"
-            name="AI 客户 360"
-            description="3 位 AI 员工协作分析"
-            team={[
-              { avatar: '🔍', color: '#13c2c2' },
-              { avatar: '😊', color: '#52c41a' },
-              { avatar: '🛡️', color: '#f5222d' },
-            ]}
-            teamMode="parallel"
-            showActions={false}
-            showChat={false}
-            style={{ marginBottom: 16 }}
+          {/* AI Customer 360 — floating trigger icon + drawer */}
+          <div style={{
+            position: 'fixed', right: 80, top: 80, zIndex: 100,
+            cursor: 'pointer',
+          }} onClick={() => setAi360Open(true)}>
+            <Tooltip title="AI 客户 360" placement="left">
+              <div style={{
+                width: 48, height: 48, borderRadius: '50%',
+                background: 'linear-gradient(135deg, #13c2c2, #52c41a)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 4px 12px rgba(19,194,194,0.4)',
+                border: '2px solid #fff',
+              }}>
+                <AITeamAvatars members={[
+                  { avatar: '🔍', color: '#13c2c2' },
+                  { avatar: '😊', color: '#52c41a' },
+                  { avatar: '🛡️', color: '#f5222d' },
+                ]} size={16} />
+              </div>
+            </Tooltip>
+          </div>
+
+          <Drawer
+            title={<Space><span style={{ fontSize: 18 }}>🔍</span> AI 客户 360 — {customer.name}</Space>}
+            open={ai360Open}
+            onClose={() => setAi360Open(false)}
+            width={420}
           >
-            <div style={{ padding: '12px 14px' }}>
-              <Row gutter={8}>
-                <Col span={8} style={{ textAlign: 'center' }}>
-                  <div style={{ color: '#999', fontSize: 10, marginBottom: 2 }}><CustomerServiceOutlined /> 工单</div>
-                  <div style={{ fontWeight: 700, fontSize: 18 }}>{tickets.length}</div>
-                  {openTickets.length > 0 && (
-                    <Tag color="orange" style={{ fontSize: 10 }}>{openTickets.length} 待处理</Tag>
-                  )}
-                </Col>
-                <Col span={8} style={{ textAlign: 'center' }}>
-                  <div style={{ color: '#999', fontSize: 10, marginBottom: 2 }}><ShoppingCartOutlined /> 订单</div>
-                  <div style={{ fontWeight: 700, fontSize: 18 }}>{orders.length}</div>
-                  {totalOrderAmount > 0 && (
-                    <div style={{ fontSize: 10, color: '#888' }}>${totalOrderAmount.toLocaleString()}</div>
-                  )}
-                </Col>
-                <Col span={8} style={{ textAlign: 'center' }}>
-                  <div style={{ color: '#999', fontSize: 10, marginBottom: 2 }}><MailOutlined /> 邮件</div>
-                  <div style={{ fontWeight: 700, fontSize: 18 }}>{emailLoading ? '-' : emails.length}</div>
-                </Col>
-              </Row>
+            {/* KPI summary */}
+            <Row gutter={8} style={{ marginBottom: 16 }}>
+              <Col span={8} style={{ textAlign: 'center' }}>
+                <div style={{ color: '#999', fontSize: 10, marginBottom: 2 }}><CustomerServiceOutlined /> 工单</div>
+                <div style={{ fontWeight: 700, fontSize: 18 }}>{tickets.length}</div>
+                {openTickets.length > 0 && (
+                  <Tag color="orange" style={{ fontSize: 10 }}>{openTickets.length} 待处理</Tag>
+                )}
+              </Col>
+              <Col span={8} style={{ textAlign: 'center' }}>
+                <div style={{ color: '#999', fontSize: 10, marginBottom: 2 }}><ShoppingCartOutlined /> 订单</div>
+                <div style={{ fontWeight: 700, fontSize: 18 }}>{orders.length}</div>
+                {totalOrderAmount > 0 && (
+                  <div style={{ fontSize: 10, color: '#888' }}>${totalOrderAmount.toLocaleString()}</div>
+                )}
+              </Col>
+              <Col span={8} style={{ textAlign: 'center' }}>
+                <div style={{ color: '#999', fontSize: 10, marginBottom: 2 }}><MailOutlined /> 邮件</div>
+                <div style={{ fontWeight: 700, fontSize: 18 }}>{emailLoading ? '-' : emails.length}</div>
+              </Col>
+            </Row>
 
-              <Divider style={{ margin: '10px 0' }} />
+            <Divider style={{ margin: '12px 0' }} />
 
-              {/* 客户成功顾问 insight — with popover */}
-              <AIInsightBlock
-                result={satisfactionResult}
+            {/* 客户成功顾问 insight */}
+            <AIEmployeeCard
+              avatar="😊" color="#52c41a"
+              name="客户成功顾问"
+              description="满意度分析 + 流失预警"
+              results={satisfactionResult ? [satisfactionResult] : undefined}
+              tasks={allTasks}
+              onRefresh={load}
+              context={`客户: ${customer.name}\n满意度: ${sat}\n工单: ${tickets.length}\n订单: ${orders.length}`}
+              content={satisfactionResult?.new_value || (
+                riskLevel === 'low'
+                  ? '客户活跃度高，满意度良好。建议推动升级销售或推荐计划。'
+                  : riskLevel === 'medium'
+                    ? '满意度一般，建议主动跟进工单解决情况，安排客户成功经理回访。'
+                    : '满意度偏低，存在流失风险。建议优先解决未完成工单，安排高级主管介入。'
+              )}
+              style={{ marginBottom: 12 }}
+              statusTag={
+                <Tag color={riskColors[riskLevel]} style={{ fontSize: 10, margin: 0 }}>
+                  {sat}分 · {riskLabels[riskLevel]}
+                </Tag>
+              }
+            />
+
+            {/* 合规审查员 */}
+            <AIEmployeeCard
+              avatar="🛡️" color="#f5222d"
+              name="合规审查员"
+              description="授权 + 用量合规检查"
+              results={complianceResult ? [complianceResult] : undefined}
+              tasks={allTasks}
+              onRefresh={load}
+              context={`客户: ${customer.name}\n许可证: ${customer.license_type}`}
+              content={complianceResult?.new_value || (
+                customer.license_type === 'community'
+                  ? `社区版用户，当前用量正常。${orders.length > 0 ? '已有订单记录，具备升级潜力。' : '暂无商业订单。'}`
+                  : customer.license_type === 'enterprise'
+                    ? `企业版授权有效。${tickets.length > 3 ? '工单频率较高，建议检查是否需要额外培训支持。' : '使用状况正常。'}`
+                    : `专业版授权有效。${totalOrderAmount > 50000 ? '业务量较大，可推荐企业版升级。' : '当前版本匹配度良好。'}`
+              )}
+              style={{ marginBottom: 12 }}
+            />
+
+            {/* 情报分析师 — background */}
+            {backgroundResult && (
+              <AIEmployeeCard
+                avatar="🔍" color="#13c2c2"
+                name="情报分析师"
+                description="客户背景调查"
+                results={[backgroundResult]}
                 tasks={allTasks}
                 onRefresh={load}
-                context={`客户: ${customer.name}\n满意度: ${sat}`}
-              >
-                <Space size={4} style={{ marginBottom: 4 }}>
-                  <Progress percent={sat} size="small" strokeColor={scoreColor(sat)}
-                    style={{ width: 60, margin: 0 }} format={() => ''} />
-                  <span style={{ fontWeight: 600, color: scoreColor(sat) }}>{sat}分</span>
-                  <Tag color={riskColors[riskLevel]} style={{ fontSize: 10, margin: 0 }}>
-                    {riskLabels[riskLevel]}
-                  </Tag>
-                </Space>
-                <div style={{ fontSize: 11, color: '#444', lineHeight: 1.5 }}>
-                  {satisfactionResult?.new_value || (
-                    riskLevel === 'low'
-                      ? '客户活跃度高，满意度良好。建议推动升级销售或推荐计划。'
-                      : riskLevel === 'medium'
-                        ? '满意度一般，建议主动跟进工单解决情况，安排客户成功经理回访。'
-                        : '满意度偏低，存在流失风险。建议优先解决未完成工单，安排高级主管介入。'
-                  )}
-                </div>
-              </AIInsightBlock>
+                context={`客户: ${customer.name}\n地区: ${customer.country}\n许可: ${customer.license_type}`}
+                content={customer.background || '暂无背景信息'}
+              />
+            )}
+          </Drawer>
 
-              {/* 合规审查员 — with popover */}
-              <AIInsightBlock
-                result={complianceResult}
-                tasks={allTasks}
-                onRefresh={load}
-                context={`客户: ${customer.name}\n许可证: ${customer.license_type}`}
-              >
-                <div style={{ fontSize: 11, color: '#444', lineHeight: 1.5 }}>
-                  {complianceResult?.new_value || (
-                    customer.license_type === 'community'
-                      ? `社区版用户，当前用量正常。${orders.length > 0 ? '已有订单记录，具备升级潜力。' : '暂无商业订单。'}`
-                      : customer.license_type === 'enterprise'
-                        ? `企业版授权有效。${tickets.length > 3 ? '工单频率较高，建议检查是否需要额外培训支持。' : '使用状况正常。'}`
-                        : `专业版授权有效。${totalOrderAmount > 50000 ? '业务量较大，可推荐企业版升级。' : '当前版本匹配度良好。'}`
-                  )}
-                </div>
-              </AIInsightBlock>
-            </div>
-          </AIEmployeeCard>
-
-          {/* Email Summary — interactive card */}
+          {/* Email Summary — standard AI card with chat */}
           {summary && (
             <AIEmployeeCard
               avatar="📧"
               color="#eb2f96"
-              name="邮件秘书 — 邮件摘要"
-              description={`基于 ${summary.email_count} 封邮件自动生成`}
+              name="邮件秘书"
+              description={`基于 ${summary.email_count} 封邮件自动生成摘要`}
               borderColor="#f5c2de"
               bgColor="#fff9fb"
               gradientFrom="#fff9fb"
@@ -552,22 +551,19 @@ export default function CustomerDetail({
               results={aiResults.filter(r => r.task_id === 'task-email-summary')}
               tasks={allTasks}
               onRefresh={load}
-            >
-              <div style={{
-                padding: '10px 14px', fontSize: 12, lineHeight: 1.8, color: '#444',
-                maxHeight: 300, overflowY: 'auto',
-              }}>
-                {summary.summary.split('\n').map((line, i) => {
-                  if (line.startsWith('## ')) return <div key={i} style={{ fontWeight: 700, fontSize: 13, marginTop: 8, marginBottom: 4, color: '#333' }}>{line.slice(3)}</div>;
-                  if (line.startsWith('### ')) return <div key={i} style={{ fontWeight: 600, fontSize: 12, marginTop: 6, marginBottom: 2, color: '#555' }}>{line.slice(4)}</div>;
-                  if (line.startsWith('- [ ] ')) return <div key={i} style={{ paddingLeft: 12, color: '#fa541c' }}>☐ {line.slice(6)}</div>;
-                  if (line.startsWith('- ')) return <div key={i} style={{ paddingLeft: 12 }}>• {line.slice(2)}</div>;
-                  if (line.match(/^\d+\./)) return <div key={i} style={{ paddingLeft: 8 }}>{line}</div>;
-                  if (line.trim() === '') return <div key={i} style={{ height: 4 }} />;
-                  return <div key={i}>{line}</div>;
-                })}
-              </div>
-            </AIEmployeeCard>
+              content={summary.summary}
+              context={`客户: ${customer.name}\n邮件数: ${emails.length}\n摘要内容: ${summary.summary.slice(0, 200)}`}
+              showChat={true}
+              chatPlaceholder={'关于邮件提问，如"最近讨论了什么"'}
+              onChat={async (text) => {
+                try {
+                  const res = await emailQA(customer.id, text);
+                  return res.text;
+                } catch {
+                  return '查询失败，请重试。';
+                }
+              }}
+            />
           )}
 
         </div>
@@ -577,7 +573,7 @@ export default function CustomerDetail({
       <Drawer
         title={selectedEmail?.subject}
         open={!!selectedEmail}
-        onClose={() => { setSelectedEmail(null); setReplyMode(false); setReplyResult(null); setChatHistory([]); }}
+        onClose={() => { setSelectedEmail(null); setReplyMode(false); setReplyResult(null); }}
         width={640}
         extra={
           selectedEmail?.direction === 'inbound' && (
@@ -691,86 +687,29 @@ export default function CustomerDetail({
               </AIEmployeeCard>
             )}
 
-            {/* Email Q&A */}
+            {/* Email Q&A — standard AI card with built-in chat */}
             <AIEmployeeCard
               avatar="📧"
               color="#eb2f96"
-              name="邮件秘书 — 邮件问答"
+              name="邮件秘书"
               description={`关于此邮件或 ${customer?.name} 的 ${emails.length} 封邮件提问`}
               borderColor="#f5c2de"
               bgColor="#fff9fb"
               gradientFrom="#fff9fb"
               gradientTo="#fdf0f6"
               showActions={false}
-              showChat={false}
-            >
-              <div style={{ padding: '10px 14px' }}>
-                <div style={{
-                  minHeight: 80, maxHeight: 220, overflowY: 'auto', marginBottom: 8,
-                  border: '1px solid #f0f0f0', borderRadius: 6, padding: 8,
-                  background: '#fff',
-                }}>
-                  {chatHistory.length === 0 && !qaLoading && (
-                    <div style={{ color: '#bbb', textAlign: 'center', marginTop: 12, fontSize: 12 }}>
-                      基于客户邮件历史回答问题<br />
-                      例如："最近讨论了什么？""有待办事项吗？"
-                    </div>
-                  )}
-                  {chatHistory.map((msg, i) => (
-                    <div key={i} style={{
-                      display: 'flex', gap: 6, marginBottom: 8,
-                      flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
-                    }}>
-                      {msg.role === 'ai' && <AIAvatar avatar="📧" color="#eb2f96" size={24} />}
-                      <div style={{
-                        maxWidth: '80%', padding: '6px 10px',
-                        borderRadius: msg.role === 'user' ? '10px 10px 2px 10px' : '10px 10px 10px 2px',
-                        background: msg.role === 'user' ? '#fce4ec' : '#fff',
-                        border: msg.role === 'ai' ? '1px solid #f5c2de' : 'none',
-                        fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap',
-                      }}>
-                        {msg.text}
-                      </div>
-                      {msg.role === 'user' && (
-                        <div style={{
-                          width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
-                          background: '#e0e0e0', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          fontSize: 12,
-                        }}>
-                          <UserOutlined />
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {qaLoading && (
-                    <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-                      <AIAvatar avatar="📧" color="#eb2f96" size={24} />
-                      <div style={{ padding: '6px 10px', borderRadius: '10px 10px 10px 2px', background: '#fff', border: '1px solid #f5c2de' }}>
-                        <Spin size="small" /> <span style={{ fontSize: 11, color: '#999', marginLeft: 4 }}>分析邮件中...</span>
-                      </div>
-                    </div>
-                  )}
-                  <div ref={chatEndRef} />
-                </div>
-                <Space.Compact style={{ width: '100%' }}>
-                  <Input
-                    placeholder="输入关于邮件的问题..."
-                    value={qaInput}
-                    onChange={e => setQaInput(e.target.value)}
-                    onPressEnter={handleAsk}
-                    disabled={qaLoading || emailLoading}
-                    size="small"
-                  />
-                  <Button
-                    type="primary" icon={<SendOutlined />}
-                    onClick={handleAsk} loading={qaLoading}
-                    disabled={!qaInput.trim() || emailLoading}
-                    size="small"
-                    style={{ background: '#eb2f96', borderColor: '#eb2f96' }}
-                  />
-                </Space.Compact>
-              </div>
-            </AIEmployeeCard>
+              showChat={true}
+              chatPlaceholder={'关于邮件提问，如"最近讨论了什么"'}
+              context={`客户: ${customer?.name}\n邮件数: ${emails.length}${selectedEmail ? `\n当前邮件: ${selectedEmail.subject}` : ''}`}
+              onChat={async (text) => {
+                try {
+                  const res = await emailQA(customer!.id, text);
+                  return res.text;
+                } catch {
+                  return '查询失败，请重试。';
+                }
+              }}
+            />
           </div>
         )}
       </Drawer>

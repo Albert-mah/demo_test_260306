@@ -15,7 +15,8 @@ import {
   type WorkflowDetail, type WorkflowNodeRow, type WorkflowRow, type AITask,
   type ExecutionRow, type ExecutionDetail,
 } from '../api';
-import { AITeamAvatars, AIFusedAvatar, AIParallelAvatars } from '../components/AIAvatar';
+import { AIFusedAvatar, AIParallelAvatars } from '../components/AIAvatar';
+import { AITaskSelector, type TaskConfig } from '../components/AITaskSelector';
 
 const NODE_TYPES = [
   { value: 'trigger', label: '触发器', icon: <ThunderboltOutlined />, color: '#f5222d' },
@@ -340,101 +341,34 @@ export default function WorkflowEditor({ onBack }: { onBack: () => void }) {
             {({ getFieldValue }) => getFieldValue('type') === 'ai_task' && (() => {
               let config: Record<string, unknown> = {};
               try { config = JSON.parse(getFieldValue('config') || '{}'); } catch {}
-              const selectedIds = (config.task_ids as string[]) || (config.task_id ? [config.task_id as string] : []);
-              const selectedTasks = selectedIds.map(id => allTasks.find(t => t.id === id)).filter(Boolean) as AITask[];
+              // Convert legacy task_ids/task_id to TaskConfig[]
+              const taskConfigs: TaskConfig[] = (config.taskConfigs as TaskConfig[]) || (
+                ((config.task_ids as string[]) || (config.task_id ? [config.task_id as string] : [])).map(id => {
+                  const task = allTasks.find(t => t.id === id);
+                  return { taskId: id, inputFields: task?.input_fields || [], outputFields: task?.output_fields || [] };
+                })
+              );
               return (
-                <Card size="small" title="AI 员工选择" style={{ marginBottom: 16 }}
-                  extra={selectedIds.length > 1 && (
-                    <Tag color={(config.mode || 'collaborative') === 'collaborative' ? 'purple' : 'blue'} style={{ fontSize: 10 }}>
-                      {(config.mode || 'collaborative') === 'collaborative' ? '协作模式' : '并发模式'}
-                    </Tag>
+                <Card size="small" title={<Space><RobotOutlined /> AI 任务配置</Space>}
+                  style={{ marginBottom: 16 }}
+                  extra={taskConfigs.length > 1 && (
+                    <Tag color="purple" style={{ fontSize: 10 }}>组合 {taskConfigs.length}</Tag>
                   )}>
-                  <Select
-                    mode="multiple"
-                    placeholder="选择 AI 员工（可多选）"
-                    style={{ width: '100%', marginBottom: 8 }}
-                    value={selectedIds}
-                    onChange={(ids: string[]) => {
-                      const team = ids.length > 1;
-                      form.setFieldValue('config', JSON.stringify({ ...config, task_ids: ids, team, mode: config.mode || 'collaborative' }, null, 2));
+                  <div style={{ fontSize: 11, color: '#999', marginBottom: 8 }}>
+                    选择任务并配置每个任务的输入/输出字段映射
+                  </div>
+                  <AITaskSelector
+                    tasks={allTasks}
+                    value={taskConfigs}
+                    onChange={configs => {
+                      form.setFieldValue('config', JSON.stringify({
+                        ...config,
+                        taskConfigs: configs,
+                        task_ids: configs.map(c => c.taskId),
+                        team: configs.length > 1,
+                      }, null, 2));
                     }}
-                    options={allTasks.map(t => ({
-                      value: t.id,
-                      label: <Space size={4}><span>{t.avatar || '🤖'}</span> {t.name}</Space>,
-                    }))}
-                    filterOption={(input, option) =>
-                      (allTasks.find(t => t.id === option?.value)?.name || '').toLowerCase().includes(input.toLowerCase())
-                    }
-                    maxTagCount={3}
                   />
-
-                  {/* Mode selector — only show when 2+ employees */}
-                  {selectedIds.length > 1 && (
-                    <div style={{
-                      display: 'flex', gap: 8, marginBottom: 8,
-                    }}>
-                      {([
-                        { key: 'collaborative', label: '协作', desc: '合并 Prompt → 1 次调用 → JSON 合并输出', color: '#8b5cf6' },
-                        { key: 'parallel', label: '并发', desc: `${selectedIds.length} 次独立调用 → 各自输出 → 按字段回填`, color: '#1677ff' },
-                      ] as const).map(m => {
-                        const active = (config.mode || 'collaborative') === m.key;
-                        return (
-                          <div key={m.key}
-                            onClick={() => form.setFieldValue('config', JSON.stringify({ ...config, mode: m.key }, null, 2))}
-                            style={{
-                              flex: 1, padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
-                              border: `2px solid ${active ? m.color : '#e8e8e8'}`,
-                              background: active ? (m.key === 'collaborative' ? '#faf8ff' : '#f0f5ff') : '#fff',
-                              transition: 'all 0.2s',
-                            }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                              {m.key === 'collaborative'
-                                ? <AIFusedAvatar members={selectedTasks.map(t => ({ avatar: t.avatar, color: t.avatar_color }))} size={24} />
-                                : <AIParallelAvatars members={selectedTasks.map(t => ({ avatar: t.avatar, color: t.avatar_color }))} size={16} />
-                              }
-                              <span style={{ fontWeight: 600, fontSize: 13, color: active ? m.color : '#333' }}>{m.label}</span>
-                            </div>
-                            <div style={{ fontSize: 11, color: '#999', lineHeight: 1.4 }}>{m.desc}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Employee cards */}
-                  {selectedTasks.length > 0 && (
-                    <div style={{ border: '1px solid #f0ecff', borderRadius: 6, padding: 8, background: '#faf8ff' }}>
-                      {selectedTasks.map((t, i) => (
-                        <div key={t.id} style={{
-                          display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 0',
-                          borderBottom: i < selectedTasks.length - 1 ? '1px solid #f0ecff' : 'none',
-                        }}>
-                          <span style={{
-                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                            width: 28, height: 28, borderRadius: '50%', background: t.avatar_color,
-                            fontSize: 14, flexShrink: 0, marginTop: 2,
-                          }}>{t.avatar}</span>
-                          <div style={{ flex: 1, fontSize: 12 }}>
-                            <div style={{ fontWeight: 600, color: '#333' }}>{t.name}</div>
-                            <div style={{ color: '#999', fontSize: 11 }}>{t.description}</div>
-                            <div style={{ color: '#bbb', fontSize: 10, marginTop: 2 }}>
-                              输出: {(t.output_fields || []).join(', ')} · {t.model_tier}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                      {selectedTasks.length > 1 && (
-                        <div style={{ fontSize: 10, color: '#8b5cf6', marginTop: 6, padding: '4px 0', borderTop: '1px solid #f0ecff' }}>
-                          {(config.mode || 'collaborative') === 'collaborative'
-                            ? <>协作合并输出: <code style={{ background: '#f0ecff', padding: '0 4px', borderRadius: 2 }}>
-                                {`{${selectedTasks.flatMap(t => t.output_fields || []).map(f => `"${f}": "..."`).join(', ')}}`}
-                              </code></>
-                            : <>并发独立输出: {selectedTasks.map(t => `${t.avatar}→${(t.output_fields || []).join(',')}`).join(' | ')}</>
-                          }
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </Card>
               );
             })()}
