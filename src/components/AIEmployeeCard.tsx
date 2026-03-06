@@ -326,59 +326,6 @@ export function AIEmployeeCard({
 }
 
 // ============================================================
-// AIInsightBlock — Compact block for inside panels
-// ============================================================
-
-interface AIInsightBlockProps {
-  avatar?: string;
-  color?: string;
-  name?: string;
-  result?: AIResultRow;
-  tasks: AITask[];
-  onRefresh: () => void;
-  context?: string;
-  children: React.ReactNode;
-}
-
-export function AIInsightBlock({
-  avatar: avatarProp, color: colorProp, name: nameProp,
-  result, tasks, onRefresh, context, children,
-}: AIInsightBlockProps) {
-  const task = result ? tasks.find(t => t.id === result.task_id) : null;
-  const avatar = avatarProp || task?.avatar || '\u{1F916}';
-  const color = colorProp || task?.avatar_color || '#8b5cf6';
-  const name = nameProp || task?.name || result?.task_name || 'AI';
-  const isPending = result?.status === 'pending';
-
-  return (
-    <div style={{
-      padding: '8px 10px', borderRadius: 6, marginBottom: 8,
-      background: isPending ? '#faf8ff' : '#f9f9f9',
-      border: `1px solid ${isPending ? '#e8e0f7' : '#f0f0f0'}`,
-      position: 'relative',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-        {result ? (
-          <AIResultPopover results={[result]} tasks={tasks} onRefresh={onRefresh}
-            context={context} placement="bottomLeft">
-            <span style={{ cursor: 'pointer' }}>
-              <AIAvatar avatar={avatar} color={color} size={18} />
-            </span>
-          </AIResultPopover>
-        ) : (
-          <AIAvatar avatar={avatar} color={color} size={18} />
-        )}
-        <span style={{ color, fontWeight: 600, fontSize: 11 }}>{name}</span>
-        {isPending && (
-          <Tag color="purple" style={{ fontSize: 9, margin: 0, marginLeft: 'auto' }}>待处理</Tag>
-        )}
-      </div>
-      <div>{children}</div>
-    </div>
-  );
-}
-
-// ============================================================
 // AIField — Inline field marker with hover avatar + popover
 // ============================================================
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Table, Tag, Button, Space, Modal, Form, Input, message, Badge, Popover, Tooltip, Timeline, Select, Spin } from 'antd';
+import { Table, Tag, Button, Space, Modal, Form, Input, message, Badge, Popover, Timeline, Spin } from 'antd';
 import { PlusOutlined, ReloadOutlined, ThunderboltOutlined, BookOutlined, FileTextOutlined, CloseOutlined, EditOutlined, BranchesOutlined } from '@ant-design/icons';
 import { getTickets, getCustomers, getOrders, createTicket, processTicket, getTasks, getWorkflows, getWorkflow, updateResultStatus, type TicketListRow, type AIResultRow, type AITask, type WorkflowRow, type WorkflowDetail, type CustomerRow, type OrderRow } from '../api';
 import { AIAvatar } from '../components/AIAvatar';

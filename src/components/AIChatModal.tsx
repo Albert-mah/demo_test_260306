@@ -1,7 +1,8 @@
 /**
- * AIChatModal — Unified rich chat modal for AI conversations
+ * AIChatModal — Unified rich chat panel for AI conversations
  *
  * Features:
+ * - Right-side fixed panel, draggable, collapsible
  * - File upload (drag & drop + clip button)
  * - Voice input (browser SpeechRecognition)
  * - Chat history with user/AI bubbles
@@ -13,23 +14,24 @@
  * - OrderPanel (AI 校对 → opens this modal)
  * - Any future AI conversation entry point
  */
-import { useState, useRef, useEffect } from 'react';
-import { Input, Button, Upload, Tag, Space, Spin, message } from 'antd';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Input, Button, Upload, Tag, Spin, message } from 'antd';
 import {
   SendOutlined, PaperClipOutlined, AudioOutlined, AudioMutedOutlined,
   CheckCircleOutlined, CloseOutlined,
   FileImageOutlined, FilePdfOutlined, FileExcelOutlined, FileTextOutlined,
+  LeftOutlined, RightOutlined,
 } from '@ant-design/icons';
 import { AIAvatar } from './AIAvatar';
 
-const FILE_ICON_MAP: Record<string, React.ReactNode> = {
+export const FILE_ICON_MAP: Record<string, React.ReactNode> = {
   pdf: <FilePdfOutlined style={{ color: '#ff4d4f' }} />,
   image: <FileImageOutlined style={{ color: '#1677ff' }} />,
   excel: <FileExcelOutlined style={{ color: '#52c41a' }} />,
   text: <FileTextOutlined style={{ color: '#999' }} />,
 };
 
-function getFileType(name: string): string {
+export function getFileType(name: string): string {
   const ext = name.split('.').pop()?.toLowerCase() || '';
   if (['pdf'].includes(ext)) return 'pdf';
   if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(ext)) return 'image';
@@ -70,6 +72,9 @@ interface AIChatModalProps {
   width?: number;
 }
 
+const PANEL_WIDTH = 380;
+const COLLAPSED_WIDTH = 36;
+
 export function AIChatModal({
   open, onClose,
   avatar, color, name, subtitle,
@@ -77,13 +82,25 @@ export function AIChatModal({
   onSend, onAction,
   placeholder = '输入消息，可追加附件或语音...',
   context,
-  width = 560,
 }: AIChatModalProps) {
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<{ name: string; size: number }[]>([]);
   const [recording, setRecording] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const [position, setPosition] = useState({ x: 0, y: 80 });
+  const [dragging, setDragging] = useState(false);
   const recognitionRef = useRef<any>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const dragOffset = useRef({ x: 0, y: 0 });
+
+  // Initialize position on right side
+  useEffect(() => {
+    if (open) {
+      setPosition({ x: window.innerWidth - PANEL_WIDTH - 20, y: 80 });
+      setCollapsed(false);
+    }
+  }, [open]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -100,6 +117,35 @@ export function AIChatModal({
       setRecording(false);
     }
   }, [open]);
+
+  // Drag handlers
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    // Only drag from the header area (not buttons)
+    if ((e.target as HTMLElement).closest('button')) return;
+    e.preventDefault();
+    setDragging(true);
+    const rect = panelRef.current?.getBoundingClientRect();
+    if (rect) {
+      dragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const handleMove = (e: MouseEvent) => {
+      const w = collapsed ? COLLAPSED_WIDTH : PANEL_WIDTH;
+      const newX = Math.max(0, Math.min(window.innerWidth - w, e.clientX - dragOffset.current.x));
+      const newY = Math.max(0, Math.min(window.innerHeight - 100, e.clientY - dragOffset.current.y));
+      setPosition({ x: newX, y: newY });
+    };
+    const handleUp = () => setDragging(false);
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', handleUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', handleUp);
+    };
+  }, [dragging, collapsed]);
 
   const handleSend = () => {
     if (!input.trim() && files.length === 0) return;
@@ -144,40 +190,109 @@ export function AIChatModal({
     setRecording(true);
   };
 
+  const toggleCollapse = () => {
+    if (collapsed) {
+      // Expanding: make sure panel fits on screen
+      const maxX = window.innerWidth - PANEL_WIDTH - 10;
+      setPosition(prev => ({ ...prev, x: Math.min(prev.x, maxX) }));
+    }
+    setCollapsed(!collapsed);
+  };
+
   if (!open) return null;
 
+  // Collapsed: vertical tab on the edge
+  if (collapsed) {
+    return (
+      <div
+        ref={panelRef}
+        onMouseDown={handleDragStart}
+        style={{
+          position: 'fixed',
+          left: position.x,
+          top: position.y,
+          width: COLLAPSED_WIDTH,
+          borderRadius: 8,
+          background: 'linear-gradient(180deg, #8b5cf6, #6d28d9)',
+          boxShadow: '0 4px 16px rgba(139,92,246,0.3)',
+          zIndex: 1050,
+          cursor: dragging ? 'grabbing' : 'grab',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          padding: '8px 0',
+          gap: 6,
+          userSelect: 'none',
+        }}
+      >
+        <AIAvatar avatar={avatar} color={color} size={24} />
+        {messages.length > 0 && (
+          <span style={{
+            background: '#fff', color: '#8b5cf6', borderRadius: 8,
+            fontSize: 9, fontWeight: 700, padding: '0 4px', lineHeight: '14px',
+          }}>
+            {messages.length}
+          </span>
+        )}
+        <Button
+          type="text" size="small"
+          icon={<LeftOutlined style={{ fontSize: 10, color: '#fff' }} />}
+          onClick={toggleCollapse}
+          style={{ width: 24, height: 24, padding: 0 }}
+          title="展开对话"
+        />
+      </div>
+    );
+  }
+
   return (
-    <div style={{
-      position: 'fixed',
-      right: width + 20,  // float to the left of the drawer
-      top: 80,
-      width: 380,
-      maxHeight: 'calc(100vh - 120px)',
-      borderRadius: 12,
-      boxShadow: '0 8px 32px rgba(139,92,246,0.18), 0 2px 8px rgba(0,0,0,0.08)',
-      background: '#fff',
-      zIndex: 1050,
-      display: 'flex',
-      flexDirection: 'column',
-      overflow: 'hidden',
-      border: '1px solid #e8dcff',
-    }}>
-      {/* Header */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '10px 14px',
-        background: 'linear-gradient(135deg, #faf8ff, #f0ecff)',
-        borderBottom: '1px solid #e8dcff',
-        flexShrink: 0,
-      }}>
+    <div
+      ref={panelRef}
+      style={{
+        position: 'fixed',
+        left: position.x,
+        top: position.y,
+        width: PANEL_WIDTH,
+        maxHeight: `calc(100vh - ${position.y + 20}px)`,
+        borderRadius: 12,
+        boxShadow: '0 8px 32px rgba(139,92,246,0.18), 0 2px 8px rgba(0,0,0,0.08)',
+        background: '#fff',
+        zIndex: 1050,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        border: '1px solid #e8dcff',
+        transition: dragging ? 'none' : 'left 0.2s, top 0.2s',
+      }}
+    >
+      {/* Header — draggable */}
+      <div
+        onMouseDown={handleDragStart}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '10px 14px',
+          background: 'linear-gradient(135deg, #faf8ff, #f0ecff)',
+          borderBottom: '1px solid #e8dcff',
+          flexShrink: 0,
+          cursor: dragging ? 'grabbing' : 'grab',
+          userSelect: 'none',
+        }}
+      >
         <AIAvatar avatar={avatar} color={color} size={28} />
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>{name}</div>
           {subtitle && <div style={{ fontSize: 11, color: '#999' }}>{subtitle}</div>}
         </div>
+        <Button type="text" size="small"
+          icon={<RightOutlined style={{ fontSize: 10 }} />}
+          onClick={toggleCollapse}
+          style={{ color: '#999' }}
+          title="收起对话"
+        />
         <Button type="text" size="small" icon={<CloseOutlined />}
           onClick={onClose} style={{ color: '#999' }} />
       </div>
+
       {/* Context banner */}
       {context && (
         <div style={{

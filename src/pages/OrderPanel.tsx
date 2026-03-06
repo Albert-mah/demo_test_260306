@@ -4,8 +4,7 @@ import {
 } from 'antd';
 import {
   ShoppingCartOutlined, ClockCircleOutlined, AppstoreOutlined, UploadOutlined,
-  CheckCircleOutlined, FileImageOutlined, FilePdfOutlined, FileExcelOutlined,
-  FileTextOutlined, DeleteOutlined, AuditOutlined, EditOutlined,
+  CheckCircleOutlined, DeleteOutlined, AuditOutlined, EditOutlined,
 } from '@ant-design/icons';
 import {
   getOrders, getCustomers, getTickets, getResults, getTasks, uploadVoucher, updateOrder,
@@ -16,7 +15,7 @@ import { AIResultPopover } from '../components/AIResultPopover';
 import { AIFloatingButton } from '../components/AIFloatingButton';
 import { CustomerHoverCard } from '../components/CustomerHoverCard';
 import { AITriggerWrapper } from '../components/AITriggers';
-import { AIChatModal, type ChatMessage } from '../components/AIChatModal';
+import { AIChatModal, FILE_ICON_MAP, getFileType, type ChatMessage } from '../components/AIChatModal';
 
 const STATUS_MAP: Record<string, { color: string; label: string }> = {
   pending: { color: 'orange', label: '待付款' },
@@ -41,21 +40,6 @@ function parseAnalysis(text: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-const FILE_ICON_MAP: Record<string, React.ReactNode> = {
-  pdf: <FilePdfOutlined style={{ color: '#ff4d4f' }} />,
-  image: <FileImageOutlined style={{ color: '#1677ff' }} />,
-  excel: <FileExcelOutlined style={{ color: '#52c41a' }} />,
-  text: <FileTextOutlined style={{ color: '#999' }} />,
-};
-
-function getFileType(name: string): string {
-  const ext = name.split('.').pop()?.toLowerCase() || '';
-  if (['pdf'].includes(ext)) return 'pdf';
-  if (['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(ext)) return 'image';
-  if (['xls', 'xlsx', 'csv'].includes(ext)) return 'excel';
-  return 'text';
 }
 
 export default function OrderPanel() {
