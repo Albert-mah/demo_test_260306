@@ -17,6 +17,7 @@ import { AIResultPopover } from '../components/AIResultPopover';
 import { AIFloatingButton } from '../components/AIFloatingButton';
 import { RuleConfigPanel } from '../components/RuleConfigPanel';
 import { AIEmployeeCard, AIField } from '../components/AIEmployeeCard';
+import { useResponsive } from '../hooks/useResponsive';
 
 export default function TicketDetail({
   ticketId, onBack,
@@ -34,6 +35,8 @@ export default function TicketDetail({
   const [ruleDrawer, setRuleDrawer] = useState(false);
   const [selectedTone, setSelectedTone] = useState<{ emoji: string; tone: string; zh: string } | null>(null);
   const [aiFillText, setAiFillText] = useState('');
+
+  const { isMobile, isTablet } = useResponsive();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -115,12 +118,12 @@ export default function TicketDetail({
   const pendingCount = ticket.aiResults.filter(r => r.status === 'pending').length;
 
   return (
-    <AITriggerWrapper style={{ padding: 24, position: 'relative' }}>
-      <Space style={{ marginBottom: 16 }}>
-        <Button icon={<ArrowLeftOutlined />} onClick={onBack}>返回</Button>
-        <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
-        <Button icon={<ThunderboltOutlined />} onClick={handleReprocess}>重新处理</Button>
-        <Button icon={<SettingOutlined />} onClick={() => setRuleDrawer(true)}>联动规则</Button>
+    <AITriggerWrapper style={{ padding: isMobile ? 12 : 24, position: 'relative' }}>
+      <Space style={{ marginBottom: 16 }} wrap>
+        <Button icon={<ArrowLeftOutlined />} onClick={onBack}>{isMobile ? '' : '返回'}</Button>
+        <Button icon={<ReloadOutlined />} onClick={load}>{isMobile ? '' : '刷新'}</Button>
+        <Button icon={<ThunderboltOutlined />} onClick={handleReprocess}>{isMobile ? '' : '重新处理'}</Button>
+        <Button icon={<SettingOutlined />} onClick={() => setRuleDrawer(true)}>{isMobile ? '' : '联动规则'}</Button>
       </Space>
 
       {/* Main content — full width now */}
@@ -206,10 +209,10 @@ export default function TicketDetail({
         </Card>
       )}
 
-      {/* Reply area — left: textarea, right: AI card */}
-      <div style={{ display: 'flex', gap: 16, marginTop: 16, alignItems: 'flex-start' }}>
+      {/* Reply area — left: textarea, right: AI card (stacked on mobile/tablet) */}
+      <div style={{ display: 'flex', flexDirection: isTablet ? 'column' : 'row', gap: 16, marginTop: 16, alignItems: 'flex-start' }}>
         {/* Left: reply textarea */}
-        <Card title="回复" size="small" style={{ flex: 1, minWidth: 0 }}>
+        <Card title="回复" size="small" style={{ flex: 1, minWidth: 0, width: isTablet ? '100%' : undefined }}>
           <div style={{ position: 'relative' }}>
             <Input.TextArea
               value={replyText}
@@ -255,7 +258,7 @@ export default function TicketDetail({
         </Card>
 
         {/* Right: AI reply card */}
-        <div style={{ width: 380, flexShrink: 0 }}>
+        <div style={{ width: isTablet ? '100%' : 380, flexShrink: 0 }}>
           <AIReplyCard
             replyDraft={replyDraft}
             allTasks={allTasks}
@@ -352,6 +355,7 @@ function AIReplyCard({
                 }}
                 onMouseEnter={() => setHoveredTone(i)}
                 onMouseLeave={() => setHoveredTone(null)}
+                onTouchStart={() => setHoveredTone(i)}
                 onClick={() => onSelectTone(opt)}
               >
                 <div style={{

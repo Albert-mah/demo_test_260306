@@ -121,6 +121,21 @@ export const getExecution = (id: string) => request<ExecutionDetail>('/execution
 export const retryResult = (resultId: string) => request<{ id: string; text: string }>('/results/' + resultId + '/retry', { method: 'POST' });
 export const getResultContext = (resultId: string) => request<ResultContext>('/results/' + resultId + '/context');
 
+// Block Templates
+export const getBlockTemplates = (params?: Record<string, string>) => {
+  const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+  return request<BlockTemplate[]>('/block-templates' + qs);
+};
+export const getBlockTemplate = (id: string) => request<BlockTemplate>('/block-templates/' + id);
+export const createBlockTemplate = (data: Partial<BlockTemplate>) =>
+  request<{ id: string }>('/block-templates', { method: 'POST', body: JSON.stringify(data) });
+export const updateBlockTemplate = (id: string, data: Partial<BlockTemplate>) =>
+  request('/block-templates/' + id, { method: 'PUT', body: JSON.stringify(data) });
+export const deleteBlockTemplate = (id: string) =>
+  request('/block-templates/' + id, { method: 'DELETE' });
+export const useBlockTemplate = (id: string) =>
+  request('/block-templates/' + id + '/use', { method: 'POST' });
+
 // ---- Types ----
 
 export interface AITask {
@@ -261,4 +276,24 @@ export interface EmailSummaryRow {
   id: string; customer_id: string; summary: string;
   email_count: number; model: string;
   created_at: string; updated_at: string;
+}
+
+export interface BlockTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  icon: string;
+  color: string;
+  blocks: TemplateBlock[];
+  tags: string[];
+  use_count: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TemplateBlock {
+  type: 'form' | 'approval' | 'table' | 'stat' | 'text' | 'action';
+  config: Record<string, unknown>;
 }

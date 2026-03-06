@@ -19,7 +19,7 @@ import {
   CheckOutlined, CloseOutlined, RedoOutlined, EditOutlined,
   MessageOutlined, CopyOutlined,
 } from '@ant-design/icons';
-import { updateResultStatus, retryResult, type AIResultRow, type AITask } from '../api';
+import { updateResultStatus, retryResult, type AIResultRow, type AITask, type BlockTemplate } from '../api';
 import { AIAvatar, AITeamAvatars } from './AIAvatar';
 import { AIResultPopover } from './AIResultPopover';
 import { AIChatModal, type ChatMessage } from './AIChatModal';
@@ -156,6 +156,26 @@ export function AIEmployeeCard({
       }]);
     }
     setChatLoading(false);
+  };
+
+  const handleTemplateSelect = (tpl: BlockTemplate) => {
+    // User selected a template → show as user request + AI responds with rendered template
+    setChatMessages(prev => [
+      ...prev,
+      { role: 'user', text: `使用模板: ${tpl.icon} ${tpl.name}` },
+    ]);
+    setChatLoading(true);
+    setTimeout(() => {
+      setChatMessages(prev => [
+        ...prev,
+        {
+          role: 'ai',
+          text: `已加载「${tpl.name}」模板，请填写以下内容：`,
+          template: tpl,
+        },
+      ]);
+      setChatLoading(false);
+    }, 600);
   };
 
   // Status display
@@ -317,6 +337,7 @@ export function AIEmployeeCard({
           messages={chatMessages}
           loading={chatLoading}
           onSend={handleChatSend}
+          onTemplateSelect={handleTemplateSelect}
           placeholder={chatPlaceholder || '补充要求或提问，可添加附件或语音...'}
           context={context}
         />

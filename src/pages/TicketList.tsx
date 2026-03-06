@@ -6,6 +6,7 @@ import { AIAvatar } from '../components/AIAvatar';
 import { AIField } from '../components/AIEmployeeCard';
 import { useAITriggers } from '../components/AITriggers';
 import { CustomerHoverCard } from '../components/CustomerHoverCard';
+import { useResponsive } from '../hooks/useResponsive';
 
 const STATUS_COLORS: Record<string, string> = {
   open: 'blue', in_progress: 'orange', resolved: 'green', closed: 'default',
@@ -31,6 +32,8 @@ export default function TicketList({ onOpenTicket }: { onOpenTicket: (id: string
   const [wfDetail, setWfDetail] = useState<WorkflowDetail | null>(null);
   const [wfDetailLoading, setWfDetailLoading] = useState(false);
   const [form] = Form.useForm();
+
+  const { isMobile } = useResponsive();
 
   const { AITriggerWrapper } = useAITriggers(
     allTasks,
@@ -247,7 +250,8 @@ export default function TicketList({ onOpenTicket }: { onOpenTicket: (id: string
                             background: wfDetail?.id === wf.id ? '#faf8ff' : '#fff',
                             transition: 'all 0.2s',
                           }}
-                          onMouseEnter={() => handleShowWfDetail(wf.id)}
+                          onMouseEnter={isMobile ? undefined : () => handleShowWfDetail(wf.id)}
+                          onTouchStart={() => handleShowWfDetail(wf.id)}
                           onClick={async (e) => {
                             e.stopPropagation();
                             message.loading({ content: '触发工作流...', key: 'wf-trigger' });
@@ -330,7 +334,7 @@ export default function TicketList({ onOpenTicket }: { onOpenTicket: (id: string
   ];
 
   return (
-    <AITriggerWrapper style={{ padding: 24 }}>
+    <AITriggerWrapper style={{ padding: isMobile ? 12 : 24 }}>
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
         <h2 style={{ margin: 0 }}>工单列表</h2>
         <Space>
@@ -363,7 +367,7 @@ export default function TicketList({ onOpenTicket }: { onOpenTicket: (id: string
         pagination={false}
       />
 
-      <Modal title="新建工单" open={showCreate} onOk={handleCreate} onCancel={() => setShowCreate(false)} width={600}>
+      <Modal title="新建工单" open={showCreate} onOk={handleCreate} onCancel={() => setShowCreate(false)} width={isMobile ? '100%' : 600}>
         <Form form={form} layout="vertical">
           <Form.Item name="customer_name" label="客户名称" rules={[{ required: true }]}>
             <Input placeholder="如: TechFlow GmbH" />
@@ -396,7 +400,7 @@ export default function TicketList({ onOpenTicket }: { onOpenTicket: (id: string
             </div>
           </div>
         }
-        width={560}
+        width={isMobile ? '100%' : 560}
         okText="确认提交"
         cancelText="取消"
         okButtonProps={{ style: { background: '#8b5cf6', borderColor: '#8b5cf6' } }}

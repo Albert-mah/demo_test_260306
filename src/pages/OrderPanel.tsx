@@ -16,6 +16,8 @@ import { AIFloatingButton } from '../components/AIFloatingButton';
 import { CustomerHoverCard } from '../components/CustomerHoverCard';
 import { AITriggerWrapper } from '../components/AITriggers';
 import { AIChatModal, FILE_ICON_MAP, getFileType, type ChatMessage } from '../components/AIChatModal';
+import type { BlockTemplate } from '../api';
+import { useResponsive } from '../hooks/useResponsive';
 
 const STATUS_MAP: Record<string, { color: string; label: string }> = {
   pending: { color: 'orange', label: '待付款' },
@@ -43,6 +45,7 @@ function parseAnalysis(text: string): Record<string, unknown> | null {
 }
 
 export default function OrderPanel() {
+  const { isMobile } = useResponsive();
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
   const [tickets, setTickets] = useState<TicketListRow[]>([]);
@@ -173,6 +176,17 @@ export default function OrderPanel() {
     setChatLoading(false);
   };
 
+  const handleTemplateSelect = (tpl: BlockTemplate) => {
+    setChatMessages(prev => [...prev, { role: 'user', text: `使用模板: ${tpl.icon} ${tpl.name}` }]);
+    setChatLoading(true);
+    setTimeout(() => {
+      setChatMessages(prev => [...prev, {
+        role: 'ai', text: `已加载「${tpl.name}」模板，请填写以下内容：`, template: tpl,
+      }]);
+      setChatLoading(false);
+    }, 600);
+  };
+
   // Apply AI result
   const handleApplyResult = async () => {
     if (!selectedOrder || !chatResult) return;
@@ -298,7 +312,7 @@ export default function OrderPanel() {
   return (
     <AITriggerWrapper tasks={allTasks} onAction={(action, ctx) => {
       message.info(`AI 操作: ${action}${ctx.selectedText ? ` — "${ctx.selectedText.slice(0, 30)}..."` : ''}`);
-    }} style={{ padding: 24 }}>
+    }} style={{ padding: isMobile ? 12 : 24 }}>
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ margin: 0 }}>
           <ShoppingCartOutlined /> 订单管理
@@ -386,7 +400,7 @@ export default function OrderPanel() {
         title="订单详情"
         open={!!selectedOrder}
         onClose={() => setSelectedOrder(null)}
-        width={640}
+        width={isMobile ? '100%' : 640}
       >
         {selectedOrder && (
           <div style={{ position: 'relative' }}>
@@ -513,7 +527,7 @@ export default function OrderPanel() {
               return (
                 <div
                   style={{
-                    position: 'fixed', right: 660, top: '50%', transform: 'translateY(-50%)',
+                    position: 'fixed', right: isMobile ? 'auto' : 660, left: isMobile ? 12 : 'auto', top: '50%', transform: 'translateY(-50%)',
                     cursor: 'pointer', zIndex: 1010,
                     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
                   }}
@@ -564,7 +578,7 @@ export default function OrderPanel() {
         title={<Space><UploadOutlined /> 凭证附件管理</Space>}
         open={uploadOpen}
         onClose={() => setUploadOpen(false)}
-        width={420}
+        width={isMobile ? '100%' : 420}
         extra={
           <Button type="primary" icon={<AuditOutlined />}
             disabled={uploadedFiles.length === 0}
@@ -634,6 +648,7 @@ export default function OrderPanel() {
         loading={chatLoading}
         onSend={handleChatSend}
         onAction={handleApplyResult}
+        onTemplateSelect={handleTemplateSelect}
         placeholder="补充信息或追问，可添加附件或语音..."
         context={selectedOrder ? `订单: ${selectedOrder.id} | ${formatAmount(selectedOrder.amount, selectedOrder.currency)}` : undefined}
       />

@@ -17,6 +17,7 @@ import {
 } from '../api';
 import { AIFusedAvatar, AIParallelAvatars } from '../components/AIAvatar';
 import { AITaskSelector, type TaskConfig } from '../components/AITaskSelector';
+import { useResponsive } from '../hooks/useResponsive';
 
 const NODE_TYPES = [
   { value: 'trigger', label: '触发器', icon: <ThunderboltOutlined />, color: '#f5222d' },
@@ -46,6 +47,8 @@ export default function WorkflowEditor({ onBack }: { onBack: () => void }) {
   const [execLoading, setExecLoading] = useState(false);
   const [execDetail, setExecDetail] = useState<ExecutionDetail | null>(null);
   const [execDrawer, setExecDrawer] = useState(false);
+
+  const { isMobile, isTablet } = useResponsive();
 
   const loadList = useCallback(async () => {
     const [wfs, tasks] = await Promise.all([getWorkflows(), getTasks()]);
@@ -114,17 +117,17 @@ export default function WorkflowEditor({ onBack }: { onBack: () => void }) {
   };
 
   return (
-    <div style={{ padding: 24 }}>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
+    <div style={{ padding: isMobile ? 12 : 24 }}>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
         <Space>
-          <Button icon={<ArrowLeftOutlined />} onClick={onBack}>返回</Button>
+          <Button icon={<ArrowLeftOutlined />} onClick={onBack}>{isMobile ? '' : '返回'}</Button>
           <h2 style={{ margin: 0 }}><BranchesOutlined /> 工作流</h2>
         </Space>
       </div>
 
-      <div style={{ display: 'flex', gap: 16 }}>
+      <div style={{ display: 'flex', flexDirection: isTablet ? 'column' : 'row', gap: 16 }}>
         {/* Left: Workflow list */}
-        <div style={{ width: 220 }}>
+        <div style={{ width: isTablet ? '100%' : 220 }}>
           <Card title="工作流列表" size="small">
             {workflows.map(wf => (
               <div key={wf.id}
@@ -165,13 +168,13 @@ export default function WorkflowEditor({ onBack }: { onBack: () => void }) {
                     <div
                       onClick={() => openNodeEditor(node)}
                       style={{
-                        width: 280, padding: '10px 14px', border: '2px solid',
+                        width: isTablet ? '100%' : 280, maxWidth: 320, padding: '10px 14px', border: '2px solid',
                         borderColor: nodeTypeMap[node.type]?.color || '#d9d9d9',
                         borderRadius: 8, cursor: 'pointer', background: '#fff',
                         position: 'relative', transition: 'box-shadow 0.2s',
                       }}
-                      onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)')}
-                      onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}
+                      onMouseEnter={isMobile ? undefined : e => (e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)')}
+                      onMouseLeave={isMobile ? undefined : e => (e.currentTarget.style.boxShadow = 'none')}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                         <span style={{ color: nodeTypeMap[node.type]?.color, fontSize: 16 }}>
@@ -275,7 +278,7 @@ export default function WorkflowEditor({ onBack }: { onBack: () => void }) {
         </div>
 
         {/* Right: Execution history */}
-        <div style={{ width: 300 }}>
+        <div style={{ width: isTablet ? '100%' : 300 }}>
           <Card title={
             <Space>执行记录
               {executions.length > 0 && <Badge count={executions.length} style={{ backgroundColor: '#8b5cf6' }} />}
@@ -318,7 +321,7 @@ export default function WorkflowEditor({ onBack }: { onBack: () => void }) {
         title={editingNode ? `编辑节点: ${editingNode.title}` : '添加节点'}
         open={nodeDrawer}
         onClose={() => setNodeDrawer(false)}
-        width={500}
+        width={isMobile ? '100%' : 500}
         extra={<Button type="primary" onClick={handleSaveNode}
           style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}>保存</Button>}
       >
@@ -418,7 +421,7 @@ export default function WorkflowEditor({ onBack }: { onBack: () => void }) {
         title={execDetail ? `执行详情` : '加载中...'}
         open={execDrawer}
         onClose={() => setExecDrawer(false)}
-        width={560}
+        width={isMobile ? '100%' : 560}
       >
         {execDetail && (
           <div>

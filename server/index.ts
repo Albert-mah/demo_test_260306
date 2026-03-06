@@ -755,6 +755,67 @@ function parseTaskRow(row: unknown): unknown {
 }
 
 // ============================================================
+// Block Templates CRUD
+// ============================================================
+
+app.get('/api/block-templates', (c) => {
+  const { category, search } = c.req.query();
+  let sql = 'SELECT * FROM block_templates WHERE 1=1';
+  const params: unknown[] = [];
+  if (category) { sql += ' AND category = ?'; params.push(category); }
+  if (search) { sql += ' AND (name LIKE ? OR description LIKE ? OR tags LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
+  sql += ' ORDER BY use_count DESC, created_at DESC';
+  return c.json(db.prepare(sql).all(...params).map(parseTemplateRow));
+});
+
+app.get('/api/block-templates/:id', (c) => {
+  const row = db.prepare('SELECT * FROM block_templates WHERE id = ?').get(c.req.param('id'));
+  return row ? c.json(parseTemplateRow(row)) : c.json({ error: 'not found' }, 404);
+});
+
+app.post('/api/block-templates', async (c) => {
+  const body = await c.req.json();
+  const id = body.id || `tpl-${uid()}`;
+  db.prepare(`INSERT INTO block_templates (id, name, description, category, icon, color, blocks, tags)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, body.name, body.description || '', body.category || 'custom',
+      body.icon || '📋', body.color || '#8b5cf6',
+      JSON.stringify(body.blocks || []), JSON.stringify(body.tags || []));
+  return c.json({ id });
+});
+
+app.put('/api/block-templates/:id', async (c) => {
+  const body = await c.req.json();
+  const id = c.req.param('id');
+  db.prepare(`UPDATE block_templates SET name=?, description=?, category=?, icon=?, color=?, blocks=?, tags=?, updated_at=datetime('now')
+    WHERE id=?`)
+    .run(body.name, body.description || '', body.category || 'custom',
+      body.icon || '📋', body.color || '#8b5cf6',
+      JSON.stringify(body.blocks || []), JSON.stringify(body.tags || []), id);
+  return c.json({ ok: true });
+});
+
+app.delete('/api/block-templates/:id', (c) => {
+  db.prepare('DELETE FROM block_templates WHERE id = ?').run(c.req.param('id'));
+  return c.json({ ok: true });
+});
+
+app.post('/api/block-templates/:id/use', (c) => {
+  db.prepare('UPDATE block_templates SET use_count = use_count + 1 WHERE id = ?').run(c.req.param('id'));
+  return c.json({ ok: true });
+});
+
+function parseTemplateRow(row: unknown): unknown {
+  const r = row as Record<string, unknown>;
+  return {
+    ...r,
+    blocks: JSON.parse(r.blocks as string || '[]'),
+    tags: JSON.parse(r.tags as string || '[]'),
+    enabled: !!(r.enabled as number),
+  };
+}
+
+// ============================================================
 // Start
 // ============================================================
 

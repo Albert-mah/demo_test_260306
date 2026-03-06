@@ -559,5 +559,200 @@ export function seed() {
     insertAudit.run(`aud-${uid()}`, r.id, 'created', 'system', `AI ${r.action}: ${r.field_name}`);
   }
 
+  // ---- Block Templates (reusable interactive blocks for AI chat) ----
+  const insertTemplate = db.prepare(`
+    INSERT INTO block_templates (id, name, description, category, icon, color, blocks, tags, use_count)
+    VALUES (@id, @name, @description, @category, @icon, @color, @blocks, @tags, @use_count)
+  `);
+
+  const blockTemplates = [
+    {
+      id: 'tpl-ticket-form', name: '工单快速建单', description: '一句话描述自动预填工单表单',
+      category: 'form', icon: '📝', color: '#1677ff',
+      blocks: JSON.stringify([
+        { type: 'text', config: { content: '请填写工单信息，AI 将辅助补全分类和优先级。' } },
+        { type: 'form', config: {
+          fields: [
+            { name: 'customer_name', label: '客户名称', type: 'text', required: true },
+            { name: 'subject', label: '主题', type: 'text', required: true },
+            { name: 'content', label: '问题描述', type: 'textarea', required: true },
+            { name: 'category', label: '分类', type: 'select', options: ['设备维修', '软件问题', '账户问题', '功能咨询', '投诉建议', '许可证问题'], ai_fill: true },
+            { name: 'priority', label: '优先级', type: 'select', options: ['P1-紧急', 'P2-高', 'P3-中', 'P4-低'], ai_fill: true },
+          ],
+          submit_label: '创建工单',
+          submit_action: 'create_ticket',
+        }},
+      ]),
+      tags: '["工单","表单","建单"]', use_count: 42,
+    },
+    {
+      id: 'tpl-approval', name: '采购审批单', description: '多级审批流程表单，含金额校验和风险提示',
+      category: 'approval', icon: '✅', color: '#52c41a',
+      blocks: JSON.stringify([
+        { type: 'stat', config: {
+          items: [
+            { label: '申请金额', value: '{{amount}}', prefix: '¥', color: '#1677ff' },
+            { label: '预算余额', value: '{{budget_remaining}}', prefix: '¥', color: '#52c41a' },
+            { label: '风险等级', value: '{{risk_level}}', color: '{{risk_color}}' },
+          ],
+        }},
+        { type: 'form', config: {
+          fields: [
+            { name: 'department', label: '申请部门', type: 'text', required: true },
+            { name: 'item_name', label: '采购物品', type: 'text', required: true },
+            { name: 'amount', label: '金额', type: 'number', required: true },
+            { name: 'reason', label: '采购理由', type: 'textarea', required: true },
+            { name: 'urgency', label: '紧急程度', type: 'select', options: ['普通', '紧急', '特急'] },
+          ],
+          submit_label: '提交审批',
+          submit_action: 'submit_approval',
+        }},
+        { type: 'approval', config: {
+          steps: [
+            { role: '部门主管', status: 'pending' },
+            { role: '财务经理', status: 'waiting', condition: 'amount > 10000' },
+            { role: 'CEO', status: 'waiting', condition: 'amount > 50000' },
+          ],
+        }},
+      ]),
+      tags: '["审批","采购","财务"]', use_count: 28,
+    },
+    {
+      id: 'tpl-morning-brief', name: '管理晨报', description: '每日管理数据汇总，含关键指标和待办事项',
+      category: 'report', icon: '📊', color: '#722ed1',
+      blocks: JSON.stringify([
+        { type: 'text', config: { content: '## 管理晨报 — {{date}}', style: 'heading' } },
+        { type: 'stat', config: {
+          items: [
+            { label: '新增工单', value: '{{new_tickets}}', trend: '{{ticket_trend}}' },
+            { label: '待处理', value: '{{pending_tickets}}', color: '#faad14' },
+            { label: '本周收入', value: '{{weekly_revenue}}', prefix: '¥', trend: '{{revenue_trend}}' },
+            { label: '客户满意度', value: '{{avg_satisfaction}}', suffix: '%', color: '#52c41a' },
+          ],
+        }},
+        { type: 'table', config: {
+          title: '紧急事项',
+          columns: ['事项', '负责人', '截止时间', '状态'],
+          data_source: 'urgent_items',
+        }},
+        { type: 'text', config: { content: '{{ai_insights}}', style: 'insight' } },
+        { type: 'action', config: {
+          buttons: [
+            { label: '查看全部工单', action: 'navigate', target: 'tickets' },
+            { label: '导出报告', action: 'export', format: 'pdf' },
+          ],
+        }},
+      ]),
+      tags: '["报告","管理","晨报","数据"]', use_count: 156,
+    },
+    {
+      id: 'tpl-customer-360', name: '客户 360 卡片', description: '客户全景视图，整合工单/订单/邮件/满意度数据',
+      category: 'card', icon: '👤', color: '#13c2c2',
+      blocks: JSON.stringify([
+        { type: 'stat', config: {
+          items: [
+            { label: '满意度', value: '{{satisfaction_score}}', suffix: '%', color: '{{score_color}}' },
+            { label: '工单数', value: '{{ticket_count}}' },
+            { label: '订单总额', value: '{{total_orders}}', prefix: '¥' },
+            { label: '邮件往来', value: '{{email_count}}' },
+          ],
+        }},
+        { type: 'table', config: {
+          title: '近期工单',
+          columns: ['标题', '状态', '优先级', '日期'],
+          data_source: 'recent_tickets',
+          max_rows: 5,
+        }},
+        { type: 'text', config: { content: '{{ai_summary}}', style: 'insight' } },
+        { type: 'action', config: {
+          buttons: [
+            { label: '发起沟通', action: 'compose_email' },
+            { label: '查看详情', action: 'navigate', target: 'customer_detail' },
+          ],
+        }},
+      ]),
+      tags: '["客户","卡片","CRM"]', use_count: 89,
+    },
+    {
+      id: 'tpl-file-verify', name: '三单核对', description: '上传发票/装箱单/报关单，AI 自动比对差异',
+      category: 'form', icon: '📄', color: '#fa541c',
+      blocks: JSON.stringify([
+        { type: 'text', config: { content: '上传三份单据文件，AI 将自动解析并逐项比对。' } },
+        { type: 'form', config: {
+          fields: [
+            { name: 'invoice', label: '发票', type: 'file', accept: '.pdf,.jpg,.png,.xlsx', required: true },
+            { name: 'packing_list', label: '装箱单', type: 'file', accept: '.pdf,.jpg,.png,.xlsx', required: true },
+            { name: 'customs_dec', label: '报关单', type: 'file', accept: '.pdf,.jpg,.png,.xlsx', required: true },
+          ],
+          submit_label: '开始核对',
+          submit_action: 'verify_documents',
+        }},
+        { type: 'table', config: {
+          title: '核对结果',
+          columns: ['字段', '发票', '装箱单', '报关单', '状态'],
+          data_source: 'verify_results',
+          highlight_mismatch: true,
+        }},
+      ]),
+      tags: '["核对","文件","外贸","财务"]', use_count: 35,
+    },
+    {
+      id: 'tpl-email-compose', name: '邮件生成', description: '输入中文意图，AI 自动生成多语言正式商务邮件',
+      category: 'form', icon: '✉️', color: '#597ef7',
+      blocks: JSON.stringify([
+        { type: 'form', config: {
+          fields: [
+            { name: 'recipient', label: '收件人', type: 'text', required: true },
+            { name: 'language', label: '目标语言', type: 'select', options: ['英语', '日语', '德语', '法语', '韩语'], required: true },
+            { name: 'intent', label: '表达意图（中文）', type: 'textarea', placeholder: '例如：感谢对方的耐心，告知问题已修复...', required: true },
+            { name: 'tone', label: '语气', type: 'select', options: ['专业', '友好', '紧急', '正式'] },
+          ],
+          submit_label: 'AI 生成邮件',
+          submit_action: 'generate_email',
+        }},
+        { type: 'text', config: { content: '{{generated_email}}', style: 'preview' } },
+        { type: 'action', config: {
+          buttons: [
+            { label: '发送邮件', action: 'send_email', style: 'primary' },
+            { label: '复制内容', action: 'copy' },
+            { label: '重新生成', action: 'regenerate' },
+          ],
+        }},
+      ]),
+      tags: '["邮件","生成","翻译","沟通"]', use_count: 67,
+    },
+    {
+      id: 'tpl-contract-renewal', name: '合同续约准备', description: '自动生成续约准备包：回顾、建议、风险分析',
+      category: 'report', icon: '📑', color: '#eb2f96',
+      blocks: JSON.stringify([
+        { type: 'text', config: { content: '## 合同续约准备 — {{customer_name}}', style: 'heading' } },
+        { type: 'stat', config: {
+          items: [
+            { label: '当前合同', value: '{{contract_type}}' },
+            { label: '到期日', value: '{{expiry_date}}', color: '#faad14' },
+            { label: '使用量', value: '{{usage_pct}}', suffix: '%' },
+            { label: '续约概率', value: '{{renewal_prob}}', suffix: '%', color: '#52c41a' },
+          ],
+        }},
+        { type: 'text', config: { content: '{{usage_review}}', style: 'insight' } },
+        { type: 'table', config: {
+          title: '推荐方案对比',
+          columns: ['方案', '价格', '变化', '适用场景'],
+          data_source: 'renewal_options',
+        }},
+        { type: 'text', config: { content: '{{risk_analysis}}', style: 'warning' } },
+        { type: 'action', config: {
+          buttons: [
+            { label: '生成续约邮件', action: 'generate_renewal_email', style: 'primary' },
+            { label: '创建续约工单', action: 'create_renewal_ticket' },
+          ],
+        }},
+      ]),
+      tags: '["合同","续约","客户","分析"]', use_count: 23,
+    },
+  ];
+
+  for (const t of blockTemplates) insertTemplate.run(t);
+
   console.log('Seed data inserted successfully');
 }

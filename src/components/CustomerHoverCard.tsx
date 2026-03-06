@@ -1,11 +1,12 @@
 /**
- * CustomerHoverCard — hover customer name → mini 360 card
+ * CustomerHoverCard — hover/tap customer name → mini 360 card
  * Used in TicketList, OrderPanel, etc.
  * Shows: company, country, license, satisfaction, AI insight
  */
 import { Popover, Tag, Progress, Space } from 'antd';
 import { CustomerServiceOutlined, ShoppingCartOutlined } from '@ant-design/icons';
 import { AIAvatar } from './AIAvatar';
+import { useResponsive } from '../hooks/useResponsive';
 import type { CustomerRow, TicketListRow, OrderRow } from '../api';
 
 const LICENSE_COLORS: Record<string, string> = {
@@ -31,6 +32,7 @@ interface Props {
 }
 
 export function CustomerHoverCard({ customerName, customers, tickets = [], orders = [], children }: Props) {
+  const { isMobile } = useResponsive();
   const customer = customers.find(c => c.name === customerName);
   if (!customer) return <>{children}</>;
 
@@ -40,7 +42,7 @@ export function CustomerHoverCard({ customerName, customers, tickets = [], order
   const totalAmount = custOrders.reduce((sum, o) => sum + o.amount, 0);
 
   const content = (
-    <div style={{ width: 280, fontSize: 12 }}>
+    <div style={{ width: isMobile ? 240 : 280, fontSize: 12 }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
         <div style={{ flex: 1 }}>
@@ -115,7 +117,9 @@ export function CustomerHoverCard({ customerName, customers, tickets = [], order
   );
 
   return (
-    <Popover content={content} placement="bottomLeft" trigger="hover" mouseEnterDelay={0.3}>
+    <Popover content={content} placement="bottomLeft"
+      trigger={isMobile ? 'click' : 'hover'}
+      mouseEnterDelay={isMobile ? 0 : 0.3}>
       {children}
     </Popover>
   );

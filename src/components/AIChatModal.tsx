@@ -15,14 +15,16 @@
  * - Any future AI conversation entry point
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Input, Button, Upload, Tag, Spin, message } from 'antd';
+import { Input, Button, Upload, Tag, Spin, Popover, message } from 'antd';
 import {
   SendOutlined, PaperClipOutlined, AudioOutlined, AudioMutedOutlined,
-  CheckCircleOutlined, CloseOutlined,
+  CheckCircleOutlined, CloseOutlined, AppstoreOutlined, SearchOutlined,
   FileImageOutlined, FilePdfOutlined, FileExcelOutlined, FileTextOutlined,
   LeftOutlined, RightOutlined,
 } from '@ant-design/icons';
 import { AIAvatar } from './AIAvatar';
+import { BlockTemplatePreview } from './BlockTemplatePreview';
+import { getBlockTemplates, useBlockTemplate, type BlockTemplate } from '../api';
 
 export const FILE_ICON_MAP: Record<string, React.ReactNode> = {
   pdf: <FilePdfOutlined style={{ color: '#ff4d4f' }} />,
@@ -46,6 +48,9 @@ export interface ChatMessage {
   /** If present, shows "apply" button on this message */
   actionable?: boolean;
   actionLabel?: string;
+  /** If present, renders a block template inline */
+  template?: BlockTemplate;
+  templateData?: Record<string, unknown>;
 }
 
 interface AIChatModalProps {
@@ -65,6 +70,9 @@ interface AIChatModalProps {
   // Callbacks
   onSend: (text: string, files?: { name: string; size: number }[]) => void;
   onAction?: () => void;  // "apply result" callback
+  onTemplateSelect?: (template: BlockTemplate) => void;
+  onTemplateSubmit?: (templateId: string, action: string, data: Record<string, unknown>) => void;
+  onTemplateAction?: (templateId: string, action: string, target?: string) => void;
 
   // Optional
   placeholder?: string;
@@ -79,12 +87,13 @@ export function AIChatModal({
   open, onClose,
   avatar, color, name, subtitle,
   messages, loading,
-  onSend, onAction,
+  onSend, onAction, onTemplateSelect, onTemplateSubmit, onTemplateAction,
   placeholder = '输入消息，可追加附件或语音...',
   context,
 }: AIChatModalProps) {
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<{ name: string; size: number }[]>([]);
+  const [tplPickerOpen, setTplPickerOpen] = useState(false);
   const [recording, setRecording] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 80 });
@@ -118,32 +127,47 @@ export function AIChatModal({
     }
   }, [open]);
 
-  // Drag handlers
-  const handleDragStart = useCallback((e: React.MouseEvent) => {
-    // Only drag from the header area (not buttons)
-    if ((e.target as HTMLElement).closest('button')) return;
-    e.preventDefault();
+  // Drag handlers (mouse + touch)
+  const startDrag = useCallback((clientX: number, clientY: number) => {
     setDragging(true);
     const rect = panelRef.current?.getBoundingClientRect();
     if (rect) {
-      dragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      dragOffset.current = { x: clientX - rect.left, y: clientY - rect.top };
     }
   }, []);
 
+  const handleMouseDragStart = useCallback((e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+    e.preventDefault();
+    startDrag(e.clientX, e.clientY);
+  }, [startDrag]);
+
+  const handleTouchDragStart = useCallback((e: React.TouchEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+    const touch = e.touches[0];
+    startDrag(touch.clientX, touch.clientY);
+  }, [startDrag]);
+
   useEffect(() => {
     if (!dragging) return;
-    const handleMove = (e: MouseEvent) => {
+    const moveTo = (clientX: number, clientY: number) => {
       const w = collapsed ? COLLAPSED_WIDTH : PANEL_WIDTH;
-      const newX = Math.max(0, Math.min(window.innerWidth - w, e.clientX - dragOffset.current.x));
-      const newY = Math.max(0, Math.min(window.innerHeight - 100, e.clientY - dragOffset.current.y));
+      const newX = Math.max(0, Math.min(window.innerWidth - w, clientX - dragOffset.current.x));
+      const newY = Math.max(0, Math.min(window.innerHeight - 100, clientY - dragOffset.current.y));
       setPosition({ x: newX, y: newY });
     };
-    const handleUp = () => setDragging(false);
-    document.addEventListener('mousemove', handleMove);
-    document.addEventListener('mouseup', handleUp);
+    const handleMouseMove = (e: MouseEvent) => moveTo(e.clientX, e.clientY);
+    const handleTouchMove = (e: TouchEvent) => { e.preventDefault(); moveTo(e.touches[0].clientX, e.touches[0].clientY); };
+    const handleEnd = () => setDragging(false);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleEnd);
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('touchend', handleEnd);
     return () => {
-      document.removeEventListener('mousemove', handleMove);
-      document.removeEventListener('mouseup', handleUp);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleEnd);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleEnd);
     };
   }, [dragging, collapsed]);
 
@@ -206,7 +230,8 @@ export function AIChatModal({
     return (
       <div
         ref={panelRef}
-        onMouseDown={handleDragStart}
+        onMouseDown={handleMouseDragStart}
+        onTouchStart={handleTouchDragStart}
         style={{
           position: 'fixed',
           left: position.x,
@@ -267,7 +292,8 @@ export function AIChatModal({
     >
       {/* Header — draggable */}
       <div
-        onMouseDown={handleDragStart}
+        onMouseDown={handleMouseDragStart}
+        onTouchStart={handleTouchDragStart}
         style={{
           display: 'flex', alignItems: 'center', gap: 8,
           padding: '10px 14px',
@@ -338,7 +364,26 @@ export function AIChatModal({
                   ))}
                 </div>
               )}
-              <div style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</div>
+              {msg.text && <div style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</div>}
+
+              {/* Inline template block */}
+              {msg.template && (
+                <div style={{ marginTop: msg.text ? 8 : 0 }}>
+                  <BlockTemplatePreview
+                    template={msg.template}
+                    data={msg.templateData || {}}
+                    onSubmit={(action, data) => {
+                      if (onTemplateSubmit) onTemplateSubmit(msg.template!.id, action, data);
+                      else message.success(`${msg.template!.name} 已提交`);
+                    }}
+                    onAction={(action, target) => {
+                      if (onTemplateAction) onTemplateAction(msg.template!.id, action, target);
+                      else message.info(`操作: ${action}`);
+                    }}
+                    compact
+                  />
+                </div>
+              )}
 
               {/* Action button on AI messages */}
               {msg.actionable && onAction && (
@@ -416,6 +461,32 @@ export function AIChatModal({
               style={{ color: '#999' }} title="添加附件" />
           </Upload>
 
+          {/* Template picker */}
+          <Popover
+            open={tplPickerOpen}
+            onOpenChange={setTplPickerOpen}
+            trigger="click"
+            placement="topLeft"
+            overlayStyle={{ zIndex: 1060 }}
+            content={
+              <TemplatePicker
+                onSelect={(tpl) => {
+                  useBlockTemplate(tpl.id);
+                  if (onTemplateSelect) {
+                    onTemplateSelect(tpl);
+                  } else {
+                    // Default: send as command text
+                    onSend(`/template ${tpl.id}`, undefined);
+                  }
+                  setTplPickerOpen(false);
+                }}
+              />
+            }
+          >
+            <Button icon={<AppstoreOutlined />} size="small" type="text"
+              style={{ color: tplPickerOpen ? '#8b5cf6' : '#999' }} title="插入模板" />
+          </Popover>
+
           {/* Voice input */}
           <Button
             icon={recording ? <AudioMutedOutlined /> : <AudioOutlined />}
@@ -448,6 +519,69 @@ export function AIChatModal({
             style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}
           />
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Inline template picker popover content */
+function TemplatePicker({ onSelect }: { onSelect: (tpl: BlockTemplate) => void }) {
+  const [templates, setTemplates] = useState<BlockTemplate[]>([]);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    const params: Record<string, string> = {};
+    if (search) params.search = search;
+    getBlockTemplates(params).then(data => {
+      setTemplates(data);
+      setLoading(false);
+    });
+  }, [search]);
+
+  return (
+    <div style={{ width: 260 }}>
+      <Input
+        size="small"
+        prefix={<SearchOutlined />}
+        placeholder="搜索模板..."
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        allowClear
+        style={{ marginBottom: 8 }}
+      />
+      <div style={{ maxHeight: 280, overflow: 'auto' }}>
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: 20 }}><Spin size="small" /></div>
+        ) : templates.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 20, color: '#999', fontSize: 12 }}>无匹配模板</div>
+        ) : (
+          templates.map(tpl => (
+            <div
+              key={tpl.id}
+              onClick={() => onSelect(tpl)}
+              style={{
+                padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 8,
+                marginBottom: 4, transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#f5f0ff')}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+            >
+              <span style={{ fontSize: 18 }}>{tpl.icon}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {tpl.name}
+                </div>
+                <div style={{ fontSize: 10, color: '#999', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {tpl.description}
+                </div>
+              </div>
+              <Tag style={{ fontSize: 9, flexShrink: 0 }}>{tpl.blocks.length} 区块</Tag>
+            </div>
+          ))
+        )}
       </div>
     </div>
   );

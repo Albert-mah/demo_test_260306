@@ -16,6 +16,7 @@ import {
   type AITask, type AIResultRow, type ResultContext,
 } from '../api';
 import { AIAvatar } from '../components/AIAvatar';
+import { useResponsive } from '../hooks/useResponsive';
 
 const { TextArea } = Input;
 
@@ -60,6 +61,7 @@ function groupByEmployee(tasks: AITask[]): AIEmployee[] {
 }
 
 export default function TaskManager() {
+  const { isMobile, isTablet } = useResponsive();
   const [tasks, setTasks] = useState<AITask[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -302,9 +304,9 @@ export default function TaskManager() {
   const renderEmployeeView = () => {
     const selEmp = employees.find(e => e.key === selectedEmployee);
     return (
-      <div style={{ display: 'flex', gap: 16 }}>
+      <div style={{ display: 'flex', flexDirection: isTablet ? 'column' : 'row', gap: 16 }}>
         {/* Employee list */}
-        <div style={{ width: 320, flexShrink: 0 }}>
+        <div style={{ width: isTablet ? '100%' : 320, flexShrink: 0 }}>
           <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 12, color: '#999' }}>共 {employees.length} 个员工</span>
             <Button size="small" icon={<PlusOutlined />} onClick={() => openEmployeeEditor()}>新建员工</Button>
@@ -580,11 +582,11 @@ export default function TaskManager() {
   ];
 
   return (
-    <div style={{ padding: 24 }}>
+    <div style={{ padding: isMobile ? 12 : 24 }}>
       {/* Header */}
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <h2 style={{ margin: 0 }}><RobotOutlined style={{ color: '#8b5cf6' }} /> AI 员工管理</h2>
-        <Space>
+        <Space wrap>
           <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
         </Space>
       </div>

@@ -18,6 +18,7 @@ import {
 import { updateResultStatus, type AIResultRow, type AITask } from '../api';
 import { AIAvatar, AIFusedAvatar, AITeamAvatars } from './AIAvatar';
 import { AIResultPopover } from './AIResultPopover';
+import { useResponsive } from '../hooks/useResponsive';
 
 const STATUS_COLORS: Record<string, string> = {
   pending: 'blue', applied: 'green', rejected: 'red', modified: 'orange', failed: 'red',
@@ -41,6 +42,7 @@ export function AIFloatingButton({
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<{ role: string; text: string; task?: AITask }[]>([]);
   const [historyMode, setHistoryMode] = useState<'timeline' | 'list'>('timeline');
+  const { isMobile } = useResponsive();
   const [editModal, setEditModal] = useState<{
     open: boolean; resultId: string; action: string;
     title: string; section: string; content: string; task?: AITask;
@@ -89,10 +91,14 @@ export function AIFloatingButton({
     });
   };
 
-  const startChat = (task?: AITask) => {
+  const startChat = (task?: AITask, contextText?: string) => {
     setChatMode(true);
     setChatTarget(task || null);
-    setChatHistory([]);
+    if (contextText) {
+      setChatHistory([{ role: 'ai', text: contextText, task: task || undefined }]);
+    } else {
+      setChatHistory([]);
+    }
   };
 
   const sendChat = () => {
@@ -129,8 +135,8 @@ export function AIFloatingButton({
           cursor: 'pointer', zIndex: 1000,
           transition: 'transform 0.2s', userSelect: 'none',
         }}
-        onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.1)')}
-        onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+        onMouseEnter={isMobile ? undefined : e => (e.currentTarget.style.transform = 'scale(1.1)')}
+        onMouseLeave={isMobile ? undefined : e => (e.currentTarget.style.transform = 'scale(1)')}
       >
         <Badge count={pendingCount} size="small" offset={[2, -2]}>
           {involvedTasks.length > 1
@@ -146,8 +152,10 @@ export function AIFloatingButton({
         <div
           ref={panelRef}
           style={{
-            position: 'fixed', right: 24, top: 132,
-            width: 400, maxHeight: 'calc(100vh - 160px)',
+            position: 'fixed', right: isMobile ? 8 : 24, top: 132,
+            width: isMobile ? 'calc(100vw - 16px)' : 400,
+            maxWidth: 400,
+            maxHeight: 'calc(100vh - 160px)',
             background: '#fff', borderRadius: 12,
             boxShadow: '0 8px 32px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.08)',
             zIndex: 999, overflow: 'hidden',
@@ -347,6 +355,14 @@ export function AIFloatingButton({
                                       })}>
                                       手册
                                     </Button>
+                                    <Button size="small" type="text" icon={<MessageOutlined />}
+                                      style={{ fontSize: 11, color: '#8b5cf6' }}
+                                      onClick={() => startChat(
+                                        item.task || undefined,
+                                        `关于「${actionData.kb_title || actionData.summary || item.task_name}」的建议：\n${(actionData.reason || actionData.summary || '').slice(0, 200)}\n\n你可以追问或修改内容。`,
+                                      )}>
+                                      对话
+                                    </Button>
                                     <Button size="small" type="text" icon={<CloseOutlined />}
                                       style={{ fontSize: 11 }} danger
                                       onClick={() => handleStatus(item.id, 'rejected')}>
@@ -364,6 +380,14 @@ export function AIFloatingButton({
                                       style={{ fontSize: 11 }} danger
                                       onClick={() => handleStatus(item.id, 'rejected')}>
                                       拒绝
+                                    </Button>
+                                    <Button size="small" type="text" icon={<MessageOutlined />}
+                                      style={{ fontSize: 11, color: '#8b5cf6' }}
+                                      onClick={() => startChat(
+                                        item.task || undefined,
+                                        `${item.task?.name || item.task_name} 的结果：\n${(item.new_value || '').slice(0, 200)}${(item.new_value || '').length > 200 ? '...' : ''}\n\n你可以追问、要求修改或补充说明。`,
+                                      )}>
+                                      对话
                                     </Button>
                                   </>
                                 )}

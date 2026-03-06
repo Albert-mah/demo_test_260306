@@ -272,6 +272,23 @@ CREATE TABLE IF NOT EXISTS email_summaries (
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
+-- 区块模板（可复用的交互模板，AI/人均可调用）
+CREATE TABLE IF NOT EXISTS block_templates (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  category TEXT DEFAULT 'custom',   -- form | approval | report | card | custom
+  icon TEXT DEFAULT '📋',           -- emoji icon
+  color TEXT DEFAULT '#8b5cf6',     -- theme color
+  blocks TEXT DEFAULT '[]',         -- JSON array of block definitions
+  -- block def: { type: 'form'|'approval'|'table'|'stat'|'text'|'action', config: {...} }
+  tags TEXT DEFAULT '[]',           -- JSON array: ["工单", "审批"]
+  use_count INTEGER DEFAULT 0,     -- usage counter
+  enabled INTEGER DEFAULT 1,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_results_record ON ai_results(page_id, record_id);
 CREATE INDEX IF NOT EXISTS idx_results_field ON ai_results(record_id, field_name);

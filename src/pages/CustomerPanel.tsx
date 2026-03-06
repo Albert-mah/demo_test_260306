@@ -4,6 +4,7 @@ import { TeamOutlined, SearchOutlined } from '@ant-design/icons';
 import { getCustomers, getTickets, getOrders, type CustomerRow, type TicketListRow, type OrderRow } from '../api';
 import { AIAvatar } from '../components/AIAvatar';
 import { CustomerHoverCard } from '../components/CustomerHoverCard';
+import { useResponsive } from '../hooks/useResponsive';
 
 const LICENSE_COLORS: Record<string, string> = {
   enterprise: 'purple', professional: 'blue', community: 'green',
@@ -21,6 +22,7 @@ function scoreColor(score: number) {
 const AI_SUCCESS = { avatar: '😊', color: '#52c41a', name: '客户成功顾问' };
 
 export default function CustomerPanel({ onOpenCustomer }: { onOpenCustomer: (id: string) => void }) {
+  const { isMobile } = useResponsive();
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
   const [tickets, setTickets] = useState<TicketListRow[]>([]);
   const [orders, setOrders] = useState<OrderRow[]>([]);
@@ -116,7 +118,7 @@ export default function CustomerPanel({ onOpenCustomer }: { onOpenCustomer: (id:
         );
 
         return (
-          <Popover content={popoverContent} trigger="hover" placement="bottomRight" mouseEnterDelay={0.3}>
+          <Popover content={popoverContent} trigger={isMobile ? 'click' : 'hover'} placement="bottomRight" mouseEnterDelay={isMobile ? 0 : 0.3}>
             <Space size={4} style={{ cursor: 'pointer' }}>
               <Progress
                 percent={v} size="small" strokeColor={scoreColor(v)}
@@ -133,16 +135,18 @@ export default function CustomerPanel({ onOpenCustomer }: { onOpenCustomer: (id:
   ];
 
   return (
-    <div style={{ padding: 24 }}>
+    <div style={{ padding: isMobile ? 12 : 24 }}>
       <h2 style={{ margin: '0 0 16px', display: 'flex', alignItems: 'center', gap: 8 }}>
         <TeamOutlined /> 客户管理
       </h2>
 
-      <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>
-        悬浮客户名查看 AI 洞察，点击进入客户详情。满意度列悬浮查看 AI 分析。
-      </div>
+      {!isMobile && (
+        <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>
+          悬浮客户名查看 AI 洞察，点击进入客户详情。满意度列悬浮查看 AI 分析。
+        </div>
+      )}
 
-      <Row gutter={12} style={{ marginBottom: 16 }}>
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
         {(['enterprise', 'professional', 'community'] as const).map(type => (
           <Col key={type} span={8}>
             <Card size="small" style={{ textAlign: 'center' }}>
@@ -157,14 +161,14 @@ export default function CustomerPanel({ onOpenCustomer }: { onOpenCustomer: (id:
         ))}
       </Row>
 
-      <Space style={{ marginBottom: 12 }}>
+      <Space style={{ marginBottom: 12 }} wrap>
         <Input
           placeholder="搜索客户名 / 公司"
           prefix={<SearchOutlined />}
           allowClear
           value={search}
           onChange={e => setSearch(e.target.value)}
-          style={{ width: 240 }}
+          style={{ width: isMobile ? '100%' : 240, minWidth: 160 }}
         />
         <Select
           placeholder="筛选地区"
@@ -172,7 +176,7 @@ export default function CustomerPanel({ onOpenCustomer }: { onOpenCustomer: (id:
           value={countryFilter}
           onChange={v => setCountryFilter(v)}
           options={countryOptions}
-          style={{ width: 180 }}
+          style={{ width: isMobile ? 140 : 180 }}
         />
       </Space>
 

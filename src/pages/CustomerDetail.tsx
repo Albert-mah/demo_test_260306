@@ -19,6 +19,7 @@ import { AIResultPopover } from '../components/AIResultPopover';
 import { AIFloatingButton } from '../components/AIFloatingButton';
 import { AIEmployeeCard, AIField } from '../components/AIEmployeeCard';
 import { useAITriggers } from '../components/AITriggers';
+import { useResponsive } from '../hooks/useResponsive';
 
 const LICENSE_COLORS: Record<string, string> = {
   enterprise: 'purple', professional: 'blue', community: 'green',
@@ -68,6 +69,8 @@ export default function CustomerDetail({
   const [replyIntent, setReplyIntent] = useState('');
   const [replyLoading, setReplyLoading] = useState(false);
   const [replyResult, setReplyResult] = useState<string | null>(null);
+
+  const { isMobile, isTablet } = useResponsive();
 
   const { AITriggerWrapper } = useAITriggers(
     allTasks,
@@ -169,9 +172,9 @@ export default function CustomerDetail({
   const complianceResult = latestAI('compliance_check');
 
   return (
-    <AITriggerWrapper style={{ padding: 24, position: 'relative' }}>
+    <AITriggerWrapper style={{ padding: isMobile ? 12 : 24, position: 'relative' }}>
       {/* Top bar */}
-      <Space style={{ marginBottom: 16 }}>
+      <Space style={{ marginBottom: 16 }} wrap>
         <Button icon={<ArrowLeftOutlined />} onClick={onBack}>返回</Button>
         <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
       </Space>
@@ -238,10 +241,10 @@ export default function CustomerDetail({
         )}
       </Card>
 
-      {/* Main layout: left tabs + right AI panel */}
-      <div style={{ display: 'flex', gap: 16, marginTop: 16, alignItems: 'flex-start' }}>
+      {/* Main layout: left tabs + right AI panel (stacked on mobile) */}
+      <div style={{ display: 'flex', flexDirection: isTablet ? 'column' : 'row', gap: 16, marginTop: 16, alignItems: 'flex-start' }}>
         {/* Left: Tabs */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, width: isTablet ? '100%' : undefined }}>
           <Tabs
             size="small"
             items={[
@@ -426,10 +429,10 @@ export default function CustomerDetail({
         </div>
 
         {/* Right: AI panel */}
-        <div style={{ width: 360, flexShrink: 0 }}>
+        <div style={{ width: isTablet ? '100%' : 360, flexShrink: 0 }}>
           {/* AI Customer 360 — floating trigger icon + drawer */}
           <div style={{
-            position: 'fixed', right: 80, top: 80, zIndex: 100,
+            position: 'fixed', right: isMobile ? 60 : 80, top: 80, zIndex: 100,
             cursor: 'pointer',
           }} onClick={() => setAi360Open(true)}>
             <Tooltip title="AI 客户 360" placement="left">
@@ -453,7 +456,7 @@ export default function CustomerDetail({
             title={<Space><span style={{ fontSize: 18 }}>🔍</span> AI 客户 360 — {customer.name}</Space>}
             open={ai360Open}
             onClose={() => setAi360Open(false)}
-            width={420}
+            width={isMobile ? '100%' : 420}
           >
             {/* KPI summary */}
             <Row gutter={8} style={{ marginBottom: 16 }}>

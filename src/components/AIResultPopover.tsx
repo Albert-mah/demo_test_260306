@@ -16,6 +16,7 @@ import {
 import { updateResultStatus, retryResult, type AIResultRow, type AITask } from '../api';
 import { AIAvatar, AIFusedAvatar } from './AIAvatar';
 import { AIChatModal, type ChatMessage } from './AIChatModal';
+import type { BlockTemplate } from '../api';
 
 const STATUS_MAP: Record<string, { color: string; label: string }> = {
   pending: { color: 'blue', label: '待处理' },
@@ -99,6 +100,17 @@ export function AIResultPopover({
       text: '(AI 对话功能接入中... 实际使用时会携带完整上下文调用 AI)',
     }]);
     setChatLoading(false);
+  };
+
+  const handleTemplateSelect = (tpl: BlockTemplate) => {
+    setChatMessages(prev => [...prev, { role: 'user', text: `使用模板: ${tpl.icon} ${tpl.name}` }]);
+    setChatLoading(true);
+    setTimeout(() => {
+      setChatMessages(prev => [...prev, {
+        role: 'ai', text: `已加载「${tpl.name}」模板，请填写以下内容：`, template: tpl,
+      }]);
+      setChatLoading(false);
+    }, 600);
   };
 
   // Resolve first task for chat avatar
@@ -281,6 +293,7 @@ export function AIResultPopover({
         messages={chatMessages}
         loading={chatLoading}
         onSend={handleChatSend}
+        onTemplateSelect={handleTemplateSelect}
         placeholder="补充要求或提问，可添加附件或语音..."
         context={context}
       />

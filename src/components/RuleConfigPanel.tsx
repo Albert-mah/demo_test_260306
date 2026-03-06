@@ -10,6 +10,7 @@ import {
 import { getTasks, type AITask } from '../api';
 import { AITeamAvatars, AIFusedAvatar, AIParallelAvatars } from './AIAvatar';
 import { AITaskSelector, type TaskConfig } from './AITaskSelector';
+import { useResponsive } from '../hooks/useResponsive';
 
 interface RuleItem {
   id: string;
@@ -77,6 +78,7 @@ export function RuleConfigPanel({
   pageId: string;
   recordId?: string;
 }) {
+  const { isMobile } = useResponsive();
   const [tasks, setTasks] = useState<AITask[]>([]);
   const [rules, setRules] = useState<RuleItem[]>([]);
 
@@ -141,7 +143,7 @@ export function RuleConfigPanel({
       }
       open={open}
       onClose={onClose}
-      width={620}
+      width={isMobile ? '100%' : 620}
       extra={
         <Space>
           <Button size="small" onClick={addRule} icon={<PlusOutlined />}>添加规则</Button>
