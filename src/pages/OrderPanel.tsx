@@ -307,7 +307,7 @@ export default function OrderPanel() {
               <span className="ai-cell-wrapper" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
                 <AIAvatar
                   avatar={voucherTask?.avatar || '\u{1F4B0}'}
-                  color={match === false ? '#8b5cf6' : (voucherTask?.avatar_color || '#faad14')}
+                  color={match === false ? (Number(analysis?.confidence || 0) >= 60 ? '#faad14' : '#ff4d4f') : '#52c41a'}
                   size={22}
                 />
                 {r.status === 'paid' && <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 10 }} />}
@@ -407,13 +407,23 @@ export default function OrderPanel() {
         size="small"
         loading={loading}
         pagination={false}
-        onRow={(record) => ({
-          onClick: () => {
-            setSelectedOrder(record);
-            setUploadedFiles([]);
-          },
-          style: { cursor: 'pointer' },
-        })}
+        onRow={(record) => {
+          const rowAnalysis = parseAnalysis(record.voucher_analysis);
+          const rowMatch = rowAnalysis?.match as boolean | undefined;
+          const rowHasAnalysis = !!rowAnalysis;
+          let rowBg: string | undefined;
+          if (rowHasAnalysis && record.status === 'pending') {
+            const conf = Number(rowAnalysis?.confidence || 0);
+            rowBg = rowMatch ? '#f6ffed' : conf >= 60 ? '#fffbe6' : '#fff2f0';
+          }
+          return {
+            onClick: () => {
+              setSelectedOrder(record);
+              setUploadedFiles([]);
+            },
+            style: { cursor: 'pointer', background: rowBg },
+          };
+        }}
       />
 
       {/* Detail drawer */}
@@ -537,115 +547,102 @@ export default function OrderPanel() {
               </Card>
             )}
 
-            {/* AI analysis result summary — shown after results applied */}
-            {analysis && (
-              <Card size="small" style={{
-                marginBottom: 12,
-                background: '#faf8ff',
-                borderColor: '#e8dcff',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <Tag color={analysis.match ? 'green' : 'orange'}>
-                    {analysis.match ? '匹配' : '需复核'}
-                  </Tag>
-                  <span style={{ fontWeight: 600, fontSize: 13 }}>
-                    置信度 {String(analysis.confidence || '\u2014')}%
-                  </span>
-                </div>
-                <div style={{ fontSize: 12, lineHeight: 1.8, color: '#444' }}>
-                  {analysis.voucher_amount && <p style={{ margin: '2px 0' }}><strong>凭证金额:</strong> {String(analysis.voucher_amount)}</p>}
-                  {analysis.voucher_payer && <p style={{ margin: '2px 0' }}><strong>付款方:</strong> {String(analysis.voucher_payer)}</p>}
-                  {Array.isArray(analysis.discrepancies) && (analysis.discrepancies as string[]).length > 0 && (
-                    <div style={{ margin: '2px 0' }}>
-                      <strong>差异项:</strong>
-                      <ul style={{ margin: '2px 0', paddingLeft: 16 }}>
-                        {(analysis.discrepancies as string[]).map((d: string, i: number) => (
-                          <li key={i} style={{ color: '#fa541c' }}>{d}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {analysis.recommendation && (
-                    <div style={{
-                      marginTop: 6, padding: '4px 8px', borderRadius: 4,
-                      background: '#f5f0ff', borderLeft: '3px solid #8b5cf6',
-                      fontSize: 11, color: '#555',
-                    }}>
-                      {String(analysis.recommendation)}
-                    </div>
-                  )}
-                </div>
-
-                {/* Action buttons */}
-                {selectedOrder.status === 'pending' && (
-                  <div style={{ marginTop: 10 }}>
-                    {analysis.match ? (
+            {/* Warning banner — color by analysis result */}
+            {analysis && (() => {
+              const match = analysis.match as boolean | undefined;
+              const confidence = Number(analysis.confidence || 0);
+              // Color scheme: match=green, low confidence=orange, mismatch=red
+              const level = match ? 'safe' : confidence >= 60 ? 'warn' : 'danger';
+              const colorMap = {
+                safe:   { bg: '#f6ffed', border: '#b7eb8f', accent: '#52c41a', text: '匹配' },
+                warn:   { bg: '#fffbe6', border: '#ffe58f', accent: '#faad14', text: '需复核' },
+                danger: { bg: '#fff2f0', border: '#ffccc7', accent: '#ff4d4f', text: '异常' },
+              };
+              const c = colorMap[level];
+              return (
+                <Card size="small" style={{
+                  marginBottom: 12,
+                  background: c.bg,
+                  borderColor: c.border,
+                  borderLeft: `4px solid ${c.accent}`,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Tag color={c.accent} style={{ color: '#fff', fontWeight: 600, border: 'none' }}>{c.text}</Tag>
+                    <span style={{ fontWeight: 600, fontSize: 13 }}>
+                      置信度 {String(analysis.confidence || '\u2014')}%
+                    </span>
+                    {Array.isArray(analysis.discrepancies) && (analysis.discrepancies as string[]).length > 0 && (
+                      <Tag color="red" style={{ fontSize: 10 }}>{(analysis.discrepancies as string[]).length} 项差异</Tag>
+                    )}
+                    <div style={{ flex: 1 }} />
+                    {selectedOrder.status === 'pending' && match && (
                       <Button type="primary" size="small" icon={<CheckCircleOutlined />}
                         onClick={() => handleMarkPaid(selectedOrder.id)}
-                        style={{ background: '#52c41a', borderColor: '#52c41a', width: '100%' }}>
-                        确认付款，标记为已付
+                        style={{ background: '#52c41a', borderColor: '#52c41a' }}>
+                        确认付款
                       </Button>
-                    ) : (
-                      <Space style={{ width: '100%' }} direction="vertical" size={4}>
-                        <Button type="primary" size="small"
-                          onClick={() => handleMarkPaid(selectedOrder.id)}
-                          style={{ background: '#faad14', borderColor: '#faad14', width: '100%' }}>
-                          手动确认付款
-                        </Button>
-                        <div style={{ fontSize: 11, color: '#999', textAlign: 'center' }}>凭证存在差异，请人工复核后再确认</div>
-                      </Space>
+                    )}
+                    {selectedOrder.status === 'pending' && !match && (
+                      <Button size="small"
+                        onClick={() => handleMarkPaid(selectedOrder.id)}
+                        style={{ borderColor: '#faad14', color: '#faad14' }}>
+                        手动确认
+                      </Button>
                     )}
                   </div>
-                )}
-              </Card>
-            )}
-
-            {/* AI result popover for existing results */}
-            {selectedResults.length > 0 && !analysis && (
-              <AIResultPopover results={selectedResults} tasks={allTasks} onRefresh={load}
-                context={`订单: ${selectedOrder.id}\n金额: ${formatAmount(selectedOrder.amount, selectedOrder.currency)}`}
-                placement="bottomRight">
-                <Card size="small" style={{ marginBottom: 12, cursor: 'pointer', background: '#faf8ff', borderColor: '#e8dcff' }}>
-                  <Space>
-                    <AIAvatar avatar={voucherTask?.avatar || '\u{1F4B0}'} color="#8b5cf6" size={24} />
-                    <span style={{ fontSize: 12 }}>AI 已分析，点击查看详情</span>
-                    <Tag color="purple">{selectedResults.length} 条结果</Tag>
-                  </Space>
                 </Card>
-              </AIResultPopover>
-            )}
+              );
+            })()}
 
-            {/* Purple floating AI avatar — shown when AI has processed this order */}
-            {hasAIResult && (
-              <div
-                style={{
-                  position: 'absolute', top: 8, right: 8,
-                  cursor: 'pointer', zIndex: 10,
-                  animation: 'pulse 2s ease-in-out infinite',
-                }}
-                onClick={() => {
-                  if (analysis) {
+            {/* Floating AI avatar — shown when AI has processed this order */}
+            {hasAIResult && (() => {
+              const match = analysis?.match as boolean | undefined;
+              const confidence = Number(analysis?.confidence || 0);
+              const avatarColor = match ? '#52c41a' : confidence >= 60 ? '#faad14' : '#ff4d4f';
+              return (
+                <div
+                  style={{
+                    position: 'fixed', right: 660, top: '50%', transform: 'translateY(-50%)',
+                    cursor: 'pointer', zIndex: 1010,
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+                  }}
+                  onClick={() => {
+                    const existingAnalysis = analysis || (selectedResults.length > 0 ? parseAnalysis(selectedOrder.voucher_analysis) : null);
                     const msgs: ChatMsg[] = [
                       { role: 'user', text: '请校对这笔订单的转账凭证。' },
-                      { role: 'ai', text: buildAnalysisText(analysis), analysis },
                     ];
+                    if (existingAnalysis) {
+                      msgs.push({ role: 'ai', text: buildAnalysisText(existingAnalysis), analysis: existingAnalysis });
+                      setChatResult(existingAnalysis);
+                    }
                     setChatMessages(msgs);
-                    setChatResult(analysis);
                     setChatInput('');
                     setChatFiles([]);
                     setChatOpen(true);
-                  }
-                }}
-                title="AI 校对结果 — 点击查看对话"
-              >
-                <AIAvatar
-                  avatar={voucherTask?.avatar || '\u{1F4B0}'}
-                  color="#8b5cf6"
-                  size={32}
-                  style={{ boxShadow: '0 2px 8px rgba(139,92,246,0.3)' }}
-                />
-              </div>
-            )}
+                  }}
+                  title="点击与 AI 校对员对话"
+                >
+                  <div style={{
+                    width: 48, height: 48, borderRadius: '50%',
+                    background: `linear-gradient(135deg, ${avatarColor}, #8b5cf6)`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    boxShadow: `0 4px 16px ${avatarColor}66`,
+                    border: '3px solid #fff',
+                    fontSize: 22,
+                    transition: 'all 0.3s',
+                  }}>
+                    {voucherTask?.avatar || '\u{1F4B0}'}
+                  </div>
+                  <div style={{
+                    fontSize: 10, color: '#fff', fontWeight: 600,
+                    background: avatarColor, borderRadius: 10,
+                    padding: '1px 8px', whiteSpace: 'nowrap',
+                  }}>
+                    {match ? '匹配' : '需复核'}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </Drawer>
