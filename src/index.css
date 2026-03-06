@@ -1,0 +1,39 @@
+/* Reset */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* AI purple accent */
+.ai-field {
+  background: #faf8ff;
+  border-left: 3px solid #8b5cf6;
+  padding: 2px 8px;
+  border-radius: 0 4px 4px 0;
+}
+
+/* AI bubble: icon hidden by default, show on hover */
+.ai-bubble-anchor { position: relative; }
+.ai-bubble-anchor .ai-bubble-icon { opacity: 0; transition: opacity 0.2s; }
+.ai-bubble-anchor:hover .ai-bubble-icon { opacity: 1 !important; }
+
+/* AI cell in tables: hover to show AI icon */
+.ai-cell-wrapper .ai-cell-icon { opacity: 0; transition: opacity 0.2s; }
+.ai-cell-wrapper:hover .ai-cell-icon { opacity: 1 !important; }
+
+/* Table row: hover shows AI icons inside */
+.ant-table-row:hover .ai-cell-icon { opacity: 0.6 !important; }
+.ant-table-row:hover .ai-cell-wrapper:hover .ai-cell-icon { opacity: 1 !important; }
+
+/* Selection bar fade in */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
