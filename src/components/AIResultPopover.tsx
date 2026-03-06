@@ -8,14 +8,14 @@
  * - Full context panel (collapsible)
  */
 import { useState } from 'react';
-import { Popover, Button, Space, Tag, Input, message, Tooltip, Divider, Collapse } from 'antd';
+import { Popover, Button, Space, Tag, Input, message, Divider } from 'antd';
 import {
   CheckOutlined, CloseOutlined, RedoOutlined, EditOutlined,
   MessageOutlined, CopyOutlined, InfoCircleOutlined,
-  SendOutlined, ExpandAltOutlined,
 } from '@ant-design/icons';
 import { updateResultStatus, retryResult, type AIResultRow, type AITask } from '../api';
 import { AIAvatar, AIFusedAvatar } from './AIAvatar';
+import { AIChatModal, type ChatMessage } from './AIChatModal';
 
 const STATUS_MAP: Record<string, { color: string; label: string }> = {
   pending: { color: 'blue', label: '待处理' },
@@ -50,8 +50,8 @@ export function AIResultPopover({
   children, context, contextLabel, mode = 'compact',
 }: AIResultPopoverProps) {
   const [chatOpen, setChatOpen] = useState(false);
-  const [chatInput, setChatInput] = useState('');
-  const [chatHistory, setChatHistory] = useState<{ role: string; text: string }[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [showContext, setShowContext] = useState(false);
@@ -90,18 +90,20 @@ export function AIResultPopover({
     setEditingId(null);
   };
 
-  const handleChat = () => {
-    if (!chatInput.trim()) return;
-    setChatHistory(prev => [...prev, { role: 'user', text: chatInput }]);
-    // Simulate AI response (in real app, call API with context)
-    setTimeout(() => {
-      setChatHistory(prev => [...prev, {
-        role: 'ai',
-        text: '(AI 对话功能接入中... 实际使用时会携带完整上下文调用 AI)',
-      }]);
-    }, 500);
-    setChatInput('');
+  const handleChatSend = async (text: string) => {
+    setChatMessages(prev => [...prev, { role: 'user', text }]);
+    setChatLoading(true);
+    await new Promise(r => setTimeout(r, 500));
+    setChatMessages(prev => [...prev, {
+      role: 'ai',
+      text: '(AI 对话功能接入中... 实际使用时会携带完整上下文调用 AI)',
+    }]);
+    setChatLoading(false);
   };
+
+  // Resolve first task for chat avatar
+  const firstResult = results[0];
+  const chatTask = firstResult ? resolveTask(firstResult.task_id) : null;
 
   const isForm = mode === 'form' || results.length > 2;
   const popoverWidth = isForm ? 420 : 360;
@@ -227,52 +229,13 @@ export function AIResultPopover({
         </div>
       )}
 
-      {/* Conversation area */}
-      {chatOpen ? (
-        <div style={{ background: '#faf8ff', borderRadius: 6, padding: 8, border: '1px solid #f0ecff' }}>
-          <div style={{ fontSize: 11, color: '#8b5cf6', fontWeight: 600, marginBottom: 6 }}>
-            <MessageOutlined /> 对话微调
-            {context && <span style={{ color: '#bbb', fontWeight: 400 }}> · 已携带上下文</span>}
-          </div>
-
-          {/* Chat history */}
-          {chatHistory.length > 0 && (
-            <div style={{ maxHeight: 140, overflow: 'auto', marginBottom: 6 }}>
-              {chatHistory.map((msg, i) => (
-                <div key={i} style={{
-                  padding: '4px 8px', marginBottom: 4, borderRadius: 4, fontSize: 11, lineHeight: 1.5,
-                  ...(msg.role === 'user'
-                    ? { background: '#e8e0ff', color: '#4c1d95', textAlign: 'right' as const }
-                    : { background: '#fff', color: '#444', border: '1px solid #f0f0f0' }
-                  ),
-                }}>
-                  {msg.text}
-                </div>
-              ))}
-            </div>
-          )}
-
-          <Space.Compact style={{ width: '100%' }}>
-            <Input
-              size="small"
-              value={chatInput}
-              onChange={e => setChatInput(e.target.value)}
-              placeholder="如：换个更礼貌的语气 / 加上报价信息..."
-              onPressEnter={handleChat}
-            />
-            <Button size="small" type="primary" icon={<SendOutlined />}
-              style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}
-              onClick={handleChat} />
-          </Space.Compact>
-        </div>
-      ) : (
-        <Button size="small" type="text" icon={<MessageOutlined />}
-          style={{ color: '#8b5cf6', fontSize: 11, padding: '2px 4px' }}
-          onClick={() => setChatOpen(true)}>
-          展开对话微调
-          {context && <span style={{ color: '#bbb' }}> (含上下文)</span>}
-        </Button>
-      )}
+      {/* Chat trigger — opens floating AIChatModal */}
+      <Button size="small" type="text" icon={<MessageOutlined />}
+        style={{ color: '#8b5cf6', fontSize: 11, padding: '2px 4px' }}
+        onClick={() => setChatOpen(true)}>
+        对话微调
+        {context && <span style={{ color: '#bbb' }}> (含上下文)</span>}
+      </Button>
     </div>
   );
 
@@ -297,14 +260,30 @@ export function AIResultPopover({
   );
 
   return (
-    <Popover
-      content={content}
-      title={title}
-      trigger="click"
-      placement={placement}
-      overlayStyle={{ maxWidth: popoverWidth + 40 }}
-    >
-      {children}
-    </Popover>
+    <>
+      <Popover
+        content={content}
+        title={title}
+        trigger="click"
+        placement={placement}
+        overlayStyle={{ maxWidth: popoverWidth + 40 }}
+      >
+        {children}
+      </Popover>
+
+      <AIChatModal
+        open={chatOpen}
+        onClose={() => setChatOpen(false)}
+        avatar={chatTask?.avatar || '\u{1F916}'}
+        color={chatTask?.avatar_color || '#8b5cf6'}
+        name={chatTask?.name || 'AI'}
+        subtitle="对话微调"
+        messages={chatMessages}
+        loading={chatLoading}
+        onSend={handleChatSend}
+        placeholder="补充要求或提问，可添加附件或语音..."
+        context={context}
+      />
+    </>
   );
 }
