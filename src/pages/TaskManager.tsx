@@ -8,11 +8,13 @@ import {
   PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined,
   SearchOutlined, CopyOutlined, RobotOutlined, ThunderboltOutlined,
   HistoryOutlined, EyeOutlined, RedoOutlined, UserOutlined,
-  AppstoreOutlined,
+  AppstoreOutlined, AimOutlined, DesktopOutlined, CloudOutlined,
+  ClockCircleOutlined, ApiOutlined, FileTextOutlined, LinkOutlined,
+  MessageOutlined, SendOutlined,
 } from '@ant-design/icons';
 import {
   getTasks, createTask, updateTask, toggleTask, deleteTask, generateTaskDef,
-  getResults, getResultContext, retryResult, updateResultStatus,
+  getResults, getResultContext, retryResult, updateResultStatus, addAuditNote,
   type AITask, type AIResultRow, type ResultContext,
 } from '../api';
 import { AIAvatar } from '../components/AIAvatar';
@@ -27,6 +29,13 @@ const ACTION_COLORS: Record<string, string> = {
 };
 const STATUS_COLORS: Record<string, string> = {
   pending: 'blue', applied: 'green', rejected: 'red', modified: 'orange', failed: 'red',
+};
+const TRIGGER_SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; color: string }> = {
+  frontend: { icon: <DesktopOutlined />, label: '前端', color: 'blue' },
+  backend: { icon: <CloudOutlined />, label: '后端', color: 'cyan' },
+  workflow: { icon: <AimOutlined />, label: '工作流', color: 'purple' },
+  schedule: { icon: <ClockCircleOutlined />, label: '定时', color: 'orange' },
+  api: { icon: <ApiOutlined />, label: 'API', color: 'green' },
 };
 
 // Group tasks by employee identity (avatar + name + color)
@@ -82,6 +91,8 @@ export default function TaskManager() {
   const [resultsLoading, setResultsLoading] = useState(false);
   const [detailCtx, setDetailCtx] = useState<ResultContext | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [noteInput, setNoteInput] = useState('');
+  const [addingNote, setAddingNote] = useState(false);
 
   // Selected employee
   const [selectedEmployee, setSelectedEmployee] = useState<string | null>(null);
@@ -278,7 +289,18 @@ export default function TaskManager() {
   const openResultDetail = async (resultId: string) => {
     setDetailOpen(true);
     setDetailCtx(null);
+    setNoteInput('');
     setDetailCtx(await getResultContext(resultId));
+  };
+
+  const handleAddNote = async () => {
+    if (!noteInput.trim() || !detailCtx) return;
+    setAddingNote(true);
+    await addAuditNote(detailCtx.result.id, noteInput.trim());
+    message.success('备注已添加');
+    setNoteInput('');
+    setAddingNote(false);
+    openResultDetail(detailCtx.result.id);
   };
 
   const handleRetry = async (resultId: string) => {
@@ -821,48 +843,128 @@ export default function TaskManager() {
         title={detailCtx ? `执行详情: ${detailCtx.result.task_name}` : '加载中...'}
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
-        width={580}
+        width={isMobile ? '100%' : 600}
       >
-        {detailCtx && (
+        {detailCtx && (() => {
+          const dr = detailCtx.result;
+          const src = TRIGGER_SOURCE_CONFIG[dr.trigger_source] || TRIGGER_SOURCE_CONFIG.backend;
+          return (
           <div>
-            <Card size="small" title="输入" style={{ marginBottom: 12 }}>
-              <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto', background: '#fafafa', padding: 8, borderRadius: 4, margin: 0 }}>
-                {detailCtx.result.prompt_used || JSON.stringify(detailCtx.result.input_data, null, 2)}
-              </pre>
+            {/* 触发来源 & 定位 */}
+            <Card size="small" title={<><AimOutlined style={{ color: '#8b5cf6' }} /> 触发来源 & 定位</>} style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 12 }}>
+                <div><span style={{ color: '#999' }}>来源:</span> <Tag icon={src.icon} color={src.color} style={{ fontSize: 10 }}>{src.label}</Tag></div>
+                <div><span style={{ color: '#999' }}>触发:</span> {dr.trigger_action || '-'}</div>
+                <div><span style={{ color: '#999' }}>用户:</span> {dr.trigger_user || 'system'} {dr.trigger_user_id && <span style={{ color: '#ccc' }}>({dr.trigger_user_id})</span>}</div>
+                <div><span style={{ color: '#999' }}>IP:</span> {dr.trigger_ip || '-'}</div>
+                <div><span style={{ color: '#999' }}>页面:</span> {dr.page_id || '-'} → {dr.field_name || '(记录级)'}</div>
+                <div><span style={{ color: '#999' }}>区块:</span> {dr.trigger_block_pos || '-'}</div>
+                <div><span style={{ color: '#999' }}>记录:</span> {dr.record_id}</div>
+              </div>
             </Card>
-            <Card size="small" title="输出" style={{ marginBottom: 12 }}>
+
+            {/* 执行依据 */}
+            <Card size="small" title={<><FileTextOutlined style={{ color: '#fa8c16' }} /> 执行依据</>} style={{ marginBottom: 12 }}>
+              {dr.prompt_used ? (
+                <div style={{ marginBottom: dr.input_data && Object.keys(dr.input_data).length > 0 ? 8 : 0 }}>
+                  <div style={{ fontSize: 11, color: '#999', marginBottom: 4, fontWeight: 500 }}>Prompt 模板（渲染后）</div>
+                  <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto', background: '#fffbe6', padding: 8, borderRadius: 4, margin: 0, border: '1px solid #ffe58f' }}>
+                    {dr.prompt_used}
+                  </pre>
+                </div>
+              ) : (
+                <div style={{ fontSize: 11, color: '#ccc', marginBottom: 4 }}>无 Prompt 记录</div>
+              )}
+              {dr.input_data && Object.keys(dr.input_data).length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11, color: '#999', marginBottom: 4, fontWeight: 500 }}>输入参数</div>
+                  <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', maxHeight: 160, overflow: 'auto', background: '#f6ffed', padding: 8, borderRadius: 4, margin: 0, border: '1px solid #b7eb8f' }}>
+                    {JSON.stringify(dr.input_data, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </Card>
+
+            {/* 输出 */}
+            <Card size="small" title="输出结果" style={{ marginBottom: 12 }}>
               <pre style={{ fontSize: 11, whiteSpace: 'pre-wrap', maxHeight: 200, overflow: 'auto', background: '#faf8ff', padding: 8, borderRadius: 4, borderLeft: '3px solid #8b5cf6', margin: 0 }}>
-                {detailCtx.result.new_value}
+                {dr.new_value}
               </pre>
             </Card>
-            <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>
-              {detailCtx.result.model} · {detailCtx.result.tokens_used} tokens · {detailCtx.result.duration_ms}ms · 置信度 {detailCtx.result.confidence}%
+
+            {/* 模型 & 执行 */}
+            <div style={{ fontSize: 12, color: '#999', marginBottom: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <Tag>{dr.model}</Tag>
+              <span>{dr.tokens_used} tokens</span>
+              <span>{dr.duration_ms}ms</span>
+              <span>置信度 {dr.confidence}%</span>
+              <Tag color={STATUS_COLORS[dr.status]}>{dr.status}</Tag>
             </div>
-            <Space style={{ marginBottom: 12 }}>
-              <Button size="small" icon={<RedoOutlined />} onClick={() => handleRetry(detailCtx.result.id)}>重试</Button>
-              {detailCtx.result.status === 'pending' && (
+
+            {/* 操作栏 */}
+            <Space wrap style={{ marginBottom: 12 }}>
+              <Button size="small" icon={<RedoOutlined />} onClick={() => handleRetry(dr.id)}>重试</Button>
+              {dr.status === 'pending' && (
                 <>
-                  <Button size="small" type="primary" onClick={() => handleResultStatus(detailCtx.result.id, 'applied')}
+                  <Button size="small" type="primary" onClick={() => handleResultStatus(dr.id, 'applied')}
                     style={{ background: '#52c41a', borderColor: '#52c41a' }}>采纳</Button>
-                  <Button size="small" danger onClick={() => handleResultStatus(detailCtx.result.id, 'rejected')}>拒绝</Button>
+                  <Button size="small" danger onClick={() => handleResultStatus(dr.id, 'rejected')}>拒绝</Button>
                 </>
               )}
+              <Button size="small" icon={<LinkOutlined />}
+                onClick={() => message.info(`目标: ${dr.page_id} → ${dr.record_id} → ${dr.field_name || '(记录)'}`)}>
+                定位目标
+              </Button>
+              <Button size="small" icon={<MessageOutlined />}
+                onClick={() => message.info('对话功能开发中...')}>
+                展开会话
+              </Button>
             </Space>
-            {detailCtx.audit.length > 0 && (
-              <Card size="small" title={`审计记录 (${detailCtx.audit.length})`}>
+
+            {/* 审计记录 */}
+            <Card size="small" title={`审计记录 (${detailCtx.audit.length})`}>
+              {detailCtx.audit.length === 0 ? (
+                <Empty description="暂无审计记录" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+              ) : (
                 <Timeline items={detailCtx.audit.map(log => ({
-                  color: log.action === 'applied' ? 'green' : log.action === 'rejected' ? 'red' : 'blue',
+                  color: log.action === 'applied' ? 'green' : log.action === 'rejected' ? 'red' :
+                    log.action === 'retried' ? 'orange' : log.action === 'note' ? 'gray' : 'blue',
                   children: (
                     <div style={{ fontSize: 11 }}>
-                      <Tag style={{ fontSize: 10 }}>{log.action}</Tag> {log.user_name}
-                      <br /><span style={{ color: '#bbb' }}>{log.created_at}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                        <Tag style={{ fontSize: 10 }}>{log.action}</Tag>
+                        <span style={{ fontWeight: 500 }}>{log.user_name}</span>
+                        {log.user_role && <Tag style={{ fontSize: 9 }}>{log.user_role}</Tag>}
+                        {log.user_ip && <span style={{ color: '#ccc', fontSize: 10 }}>{log.user_ip}</span>}
+                      </div>
+                      <div style={{ color: '#666', marginTop: 2 }}>{log.detail}</div>
+                      {log.note && (
+                        <div style={{ background: '#fafafa', padding: '4px 8px', borderRadius: 4, marginTop: 4, borderLeft: '2px solid #d9d9d9', color: '#555' }}>
+                          <EditOutlined style={{ fontSize: 10, marginRight: 4, color: '#bbb' }} />
+                          {log.note}
+                        </div>
+                      )}
+                      <div style={{ color: '#bbb', marginTop: 2 }}>{log.created_at}</div>
                     </div>
                   ),
                 }))} />
-              </Card>
-            )}
+              )}
+              {/* 添加备注 */}
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <Input size="small" placeholder="添加审计备注..."
+                  value={noteInput} onChange={e => setNoteInput(e.target.value)}
+                  onPressEnter={handleAddNote} style={{ flex: 1, fontSize: 12 }} />
+                <Button size="small" type="primary" icon={<SendOutlined />}
+                  loading={addingNote} onClick={handleAddNote}
+                  disabled={!noteInput.trim()}
+                  style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}>
+                  备注
+                </Button>
+              </div>
+            </Card>
           </div>
-        )}
+          );
+        })()}
       </Drawer>
     </div>
   );

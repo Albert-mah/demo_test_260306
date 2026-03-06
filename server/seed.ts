@@ -7,6 +7,81 @@ import crypto from 'crypto';
 
 const uid = () => crypto.randomUUID().slice(0, 8);
 
+// Demo trigger metadata — enriches result rows for audit trail
+const TRIGGER_DEFAULTS = {
+  workflow: { trigger_source: 'workflow', trigger_user: 'system', trigger_user_id: 'sys-001', trigger_ip: '10.0.1.10', trigger_action: '工作流自动触发' },
+  frontend: { trigger_source: 'frontend', trigger_user: '张明', trigger_user_id: 'user-001', trigger_ip: '192.168.1.105', trigger_action: '按钮点击' },
+  schedule: { trigger_source: 'schedule', trigger_user: 'system', trigger_user_id: 'sys-001', trigger_ip: '10.0.1.10', trigger_action: '定时任务' },
+  api: { trigger_source: 'api', trigger_user: 'api-client', trigger_user_id: 'api-001', trigger_ip: '203.0.113.50', trigger_action: 'API 调用' },
+};
+
+const PAGE_PATHS: Record<string, string> = {
+  tickets: '/tickets',
+  customers: '/customers',
+  orders: '/orders',
+  emails: '/emails',
+  'email-summaries': '/emails/summaries',
+};
+
+// Auto-generate input_data and prompt_used from task type
+const PROMPT_TEMPLATES: Record<string, (r: Record<string, unknown>) => { input_data: string; prompt_used: string }> = {
+  'task-translate': (r) => ({
+    input_data: JSON.stringify({ content: `(工单 ${r.record_id} 原文)`, target_lang: '中文', source_field: r.field_name }),
+    prompt_used: `将以下文本翻译为中文，只输出翻译结果，不加任何解释：\n\n(工单 ${r.record_id} 原文内容)`,
+  }),
+  'task-classify': (r) => ({
+    input_data: JSON.stringify({ content: `(工单 ${r.record_id} 内容摘要)`, categories: ['设备维修', '软件问题', '账户问题', '功能咨询', '投诉建议', '许可证问题', '数据问题'] }),
+    prompt_used: `只输出一个分类标签：设备维修 | 软件问题 | 账户问题 | 功能咨询 | 投诉建议 | 许可证问题 | 数据问题 | 其他\n\n工单内容：\n(工单 ${r.record_id} 内容)`,
+  }),
+  'task-priority': (r) => ({
+    input_data: JSON.stringify({ content: `(工单 ${r.record_id} 内容)`, category: r.new_value || '未分类', severity_factors: ['影响范围', '紧急程度', '业务影响'] }),
+    prompt_used: `只输出优先级：P1-紧急 | P2-高 | P3-中 | P4-低\n\n分类：${r.new_value || '未知'}\n内容：(工单 ${r.record_id} 内容)`,
+  }),
+  'task-reply-gen': (r) => ({
+    input_data: JSON.stringify({ content: `(工单 ${r.record_id} 完整内容)`, customer_lang: '英语', knowledge_context: '(匹配的知识库条目)', tone_options: ['专业', '温和', '简洁'] }),
+    prompt_used: `为以下工单生成回复，同时提供英语版本和中文版本。\n\n工单内容：\n(工单 ${r.record_id} 完整内容)\n\n参考知识库：\n(已匹配的知识库条目)`,
+  }),
+  'task-customer-bg': (r) => ({
+    input_data: JSON.stringify({ customer_id: r.record_id, data_sources: ['crm', 'tickets', 'emails', 'orders'], analysis_depth: 'full' }),
+    prompt_used: `调查客户 ${r.record_id} 的背景信息，综合 CRM、工单、邮件、订单数据，输出客户画像。`,
+  }),
+  'task-satisfaction': (r) => ({
+    input_data: JSON.stringify({ customer_id: r.record_id, metrics: ['ticket_frequency', 'response_satisfaction', 'email_sentiment', 'renewal_status'] }),
+    prompt_used: `分析客户 ${r.record_id} 的满意度，综合工单频率、响应满意度、邮件情绪、续约状态，给出评估和建议。`,
+  }),
+  'task-violation': (r) => ({
+    input_data: JSON.stringify({ customer_id: r.record_id, check_items: ['license_validity', 'usage_limits', 'data_compliance', 'api_quota'] }),
+    prompt_used: `检查客户 ${r.record_id} 的合规状态：授权有效性、用量限制、数据合规、API 配额。`,
+  }),
+  'task-voucher': (r) => ({
+    input_data: JSON.stringify({ order_id: r.record_id, voucher_content: '(上传的凭证文本)', order_amount: '(订单金额)', currency: '(币种)' }),
+    prompt_used: `核对订单 ${r.record_id} 的付款凭证：比对凭证金额与订单金额，检查付款方、币种、日期，输出匹配结果和差异。`,
+  }),
+  'task-knowledge': (r) => ({
+    input_data: JSON.stringify({ ticket_id: r.record_id, resolution: '(工单解决方案)', category: '(工单分类)', analysis_type: 'knowledge_extraction' }),
+    prompt_used: `分析已解决工单 ${r.record_id} 的解决方案，判断是否适合写入知识库或用户手册，提取关键知识点。`,
+  }),
+  'task-email-summary': (r) => ({
+    input_data: JSON.stringify({ customer_id: r.record_id, email_count: 6, date_range: '近30天', summary_type: 'comprehensive' }),
+    prompt_used: `汇总客户 ${r.record_id} 近30天的邮件往来，提取关键事项、待办、商业洞察。`,
+  }),
+};
+
+function enrichResult(r: Record<string, unknown>, page: string, triggerType: keyof typeof TRIGGER_DEFAULTS = 'workflow', blockPos = '') {
+  const t = TRIGGER_DEFAULTS[triggerType];
+  const taskId = r.task_id as string;
+  const promptGen = PROMPT_TEMPLATES[taskId];
+  const { input_data, prompt_used } = promptGen ? promptGen(r) : { input_data: '{}', prompt_used: '' };
+  return {
+    ...r,
+    ...t,
+    input_data,
+    prompt_used,
+    trigger_page_path: PAGE_PATHS[page] || `/${page}`,
+    trigger_block_pos: blockPos || `${page}/${r.field_name || 'record'}`,
+  };
+}
+
 export function seed() {
   const count = db.prepare('SELECT COUNT(*) as c FROM tickets').get() as { c: number };
   if (count.c > 0) return;
@@ -349,8 +424,12 @@ export function seed() {
   // This gives the demo realistic AI-filled data with purple indicators
   const insertResult = db.prepare(`
     INSERT INTO ai_results (id, task_id, task_name, action, page_id, record_id, field_name,
+      trigger_source, trigger_user, trigger_user_id, trigger_ip, trigger_action, trigger_page_path, trigger_block_pos,
+      input_data, prompt_used,
       old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response)
     VALUES (@id, @task_id, @task_name, @action, 'tickets', @record_id, @field_name,
+      @trigger_source, @trigger_user, @trigger_user_id, @trigger_ip, @trigger_action, @trigger_page_path, @trigger_block_pos,
+      @input_data, @prompt_used,
       @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response)
   `);
 
@@ -460,13 +539,17 @@ export function seed() {
     ]), confidence: 89, model: 'gemini-2.0-flash', tokens_used: 310, duration_ms: 2700, status: 'pending', raw_response: '' },
   ];
 
-  for (const r of [...tk1Results, ...tk2Results, ...tk3Results, ...tk4Results, ...tk5Results, ...tk6Results, ...tk7Results, ...tk8Results]) insertResult.run(r);
+  for (const r of [...tk1Results, ...tk2Results, ...tk3Results, ...tk4Results, ...tk5Results, ...tk6Results, ...tk7Results, ...tk8Results]) insertResult.run(enrichResult(r, 'tickets', 'workflow', `工单列表/${r.field_name}`));
 
   // ---- Customer AI Results (page_id = 'customers') ----
   const insertCustResult = db.prepare(`
     INSERT INTO ai_results (id, task_id, task_name, action, page_id, record_id, field_name,
+      trigger_source, trigger_user, trigger_user_id, trigger_ip, trigger_action, trigger_page_path, trigger_block_pos,
+      input_data, prompt_used,
       old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response)
     VALUES (@id, @task_id, @task_name, @action, 'customers', @record_id, @field_name,
+      @trigger_source, @trigger_user, @trigger_user_id, @trigger_ip, @trigger_action, @trigger_page_path, @trigger_block_pos,
+      @input_data, @prompt_used,
       @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response)
   `);
 
@@ -494,13 +577,17 @@ export function seed() {
     { id: `res-${uid()}`, task_id: 'task-violation', task_name: '\u{1F6E1}\uFE0F \u5408\u89C4\u5BA1\u67E5\u5458', action: 'validate', record_id: 'cust-005', field_name: 'compliance_check', old_value: '', new_value: '\u{26A0}\uFE0F \u793E\u533A\u7248\u7528\u6237\u4F7F\u7528\u8D85\u9650\uFF01\u65E5\u5747API\u8C03\u75282,400\u6B21\uFF08\u9650\u5236500\u6B21\uFF09\uFF0C\u6570\u636E\u91CF12\u4E07\u6761\uFF08\u9650\u52361\u4E07\u6761\uFF09\u3002\u5EFA\u8BAE\u6838\u5B9E\u4F7F\u7528\u60C5\u51B5\u5E76\u63A8\u52A8\u5347\u7EA7\u3002', confidence: 94, model: 'gemini-2.0-flash', tokens_used: 110, duration_ms: 820, status: 'pending', raw_response: '' },
   ];
 
-  for (const r of [...cust1Results, ...cust2Results, ...cust3Results, ...cust5Results]) insertCustResult.run(r);
+  for (const r of [...cust1Results, ...cust2Results, ...cust3Results, ...cust5Results]) insertCustResult.run(enrichResult(r, 'customers', 'schedule', `客户管理/${r.field_name}`));
 
   // ---- Order AI Results (page_id = 'orders') ----
   const insertOrdResult = db.prepare(`
     INSERT INTO ai_results (id, task_id, task_name, action, page_id, record_id, field_name,
+      trigger_source, trigger_user, trigger_user_id, trigger_ip, trigger_action, trigger_page_path, trigger_block_pos,
+      input_data, prompt_used,
       old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response)
     VALUES (@id, @task_id, @task_name, @action, 'orders', @record_id, @field_name,
+      @trigger_source, @trigger_user, @trigger_user_id, @trigger_ip, @trigger_action, @trigger_page_path, @trigger_block_pos,
+      @input_data, @prompt_used,
       @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response)
   `);
 
@@ -513,13 +600,17 @@ export function seed() {
     { id: `res-${uid()}`, task_id: 'task-voucher', task_name: '\u{1F4B0} \u8D22\u52A1\u6838\u5BF9\u5458', action: 'validate', record_id: 'ord-005', field_name: 'voucher_analysis', old_value: '', new_value: '{"match":false,"confidence":72,"voucher_amount":"EUR 14,800","voucher_payer":"TechFlow GmbH","discrepancies":["\u8BA2\u5355\u91D1\u989D EUR 15,200 \u4E0E\u51ED\u8BC1\u91D1\u989D EUR 14,800 \u5DEE\u989D EUR 400","\u53EF\u80FD\u539F\u56E0\uFF1A\u5BA2\u6237\u6263\u9664\u4E86\u94F6\u884C\u624B\u7EED\u8D39"],"recommendation":"\u5EFA\u8BAE\u4E0E\u5BA2\u6237\u786E\u8BA4\u5DEE\u989D\u539F\u56E0\uFF0C\u786E\u8BA4\u540E\u53EF\u624B\u52A8\u6807\u8BB0\u4ED8\u6B3E\u3002"}', confidence: 72, model: 'gemini-2.0-flash', tokens_used: 220, duration_ms: 1800, status: 'pending', raw_response: '' },
   ];
 
-  for (const r of [...ord3Results, ...ord5Results]) insertOrdResult.run(r);
+  for (const r of [...ord3Results, ...ord5Results]) insertOrdResult.run(enrichResult(r, 'orders', 'frontend', `订单管理/凭证上传`));
 
   // ---- Email Translation AI Results (page_id = 'emails') ----
   const insertEmailResult = db.prepare(`
     INSERT INTO ai_results (id, task_id, task_name, action, page_id, record_id, field_name,
+      trigger_source, trigger_user, trigger_user_id, trigger_ip, trigger_action, trigger_page_path, trigger_block_pos,
+      input_data, prompt_used,
       old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response)
     VALUES (@id, @task_id, @task_name, @action, 'emails', @record_id, @field_name,
+      @trigger_source, @trigger_user, @trigger_user_id, @trigger_ip, @trigger_action, @trigger_page_path, @trigger_block_pos,
+      @input_data, @prompt_used,
       @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response)
   `);
 
@@ -532,13 +623,17 @@ export function seed() {
     { id: `res-${uid()}`, task_id: 'task-translate', task_name: '\u{1F310} \u7FFB\u8BD1\u4E13\u5458', action: 'translate', record_id: 'email-sk-03', field_name: 'translation', old_value: '', new_value: '\u5173\u4E8E\u4F01\u4E1A\u7248\u7684\u591A\u79DF\u6237\u529F\u80FD\u6709\u4E00\u4E2A\u95EE\u9898\u3002', confidence: 91, model: 'gemini-2.0-flash', tokens_used: 72, duration_ms: 560, status: 'applied', raw_response: '' },
   ];
 
-  for (const r of emailTransResults) insertEmailResult.run(r);
+  for (const r of emailTransResults) insertEmailResult.run(enrichResult(r, 'emails', 'workflow', `邮件管理/翻译`));
 
   // ---- Email Summary AI Results (page_id = 'email-summaries') ----
   const insertSumResult = db.prepare(`
     INSERT INTO ai_results (id, task_id, task_name, action, page_id, record_id, field_name,
+      trigger_source, trigger_user, trigger_user_id, trigger_ip, trigger_action, trigger_page_path, trigger_block_pos,
+      input_data, prompt_used,
       old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response)
     VALUES (@id, @task_id, @task_name, @action, 'email-summaries', @record_id, @field_name,
+      @trigger_source, @trigger_user, @trigger_user_id, @trigger_ip, @trigger_action, @trigger_page_path, @trigger_block_pos,
+      @input_data, @prompt_used,
       @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response)
   `);
 
@@ -547,16 +642,35 @@ export function seed() {
     { id: `res-${uid()}`, task_id: 'task-email-summary', task_name: '\u{1F4E7} \u90AE\u4EF6\u79D8\u4E66', action: 'summarize', record_id: 'cust-004', field_name: 'email_summary', old_value: '', new_value: '\u57FA\u4E8E5\u5C01\u90AE\u4EF6\u751F\u6210\u6458\u8981\uFF0C\u542B\u7EED\u7EA6/GDPR/\u5BFC\u51FA\u9700\u6C42\u3002', confidence: 88, model: 'gemini-2.0-flash', tokens_used: 320, duration_ms: 2400, status: 'applied', raw_response: '' },
   ];
 
-  for (const r of sumResults) insertSumResult.run(r);
+  for (const r of sumResults) insertSumResult.run(enrichResult(r, 'email-summaries', 'schedule', `邮件摘要/自动生成`));
 
   // Also insert audit log entries for the results
-  const insertAudit = db.prepare('INSERT INTO audit_log (id, result_id, action, user_name, detail) VALUES (?, ?, ?, ?, ?)');
+  const insertAudit = db.prepare('INSERT INTO audit_log (id, result_id, action, user_name, user_id, user_role, user_ip, detail, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const allResults = [...tk1Results, ...tk2Results, ...tk3Results, ...tk4Results, ...tk5Results,
     ...tk6Results, ...tk7Results, ...tk8Results,
     ...cust1Results, ...cust2Results, ...cust3Results, ...cust5Results,
     ...ord3Results, ...ord5Results, ...emailTransResults, ...sumResults];
   for (const r of allResults) {
-    insertAudit.run(`aud-${uid()}`, r.id, 'created', 'system', `AI ${r.action}: ${r.field_name}`);
+    insertAudit.run(`aud-${uid()}`, r.id, 'created', 'system', 'sys-001', 'admin', '10.0.1.10',
+      `AI ${r.action}: ${r.field_name}`, '');
+  }
+  // Add "applied" audit entries with operator notes
+  const REVIEW_NOTES = [
+    '翻译结果准确，术语与客户历史用语一致',
+    '分类结果与人工判断一致',
+    '优先级评估合理，客户影响范围已确认',
+    '已核实凭证信息，金额与系统记录匹配',
+    '客户背景调查结果已与 CRM 数据交叉验证',
+    '满意度评估准确，已列入重点关注名单',
+    '合规检查通过，无异常',
+    '',
+  ];
+  let noteIdx = 0;
+  for (const r of allResults.filter(r => r.status === 'applied')) {
+    const note = REVIEW_NOTES[noteIdx % REVIEW_NOTES.length];
+    insertAudit.run(`aud-${uid()}`, r.id, 'applied', '张明', 'user-001', 'operator', '192.168.1.105',
+      `人工采纳 AI ${r.action} 结果`, note);
+    noteIdx++;
   }
 
   // ---- Block Templates (reusable interactive blocks for AI chat) ----

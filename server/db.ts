@@ -121,6 +121,15 @@ CREATE TABLE IF NOT EXISTS ai_results (
   field_name TEXT DEFAULT '',       -- 目标字段名（空=记录级别）
   block_id TEXT DEFAULT '',         -- 区块标识（用于前端定位）
 
+  -- 触发来源（审计定位）
+  trigger_source TEXT DEFAULT 'backend',  -- frontend | backend | workflow | schedule | api
+  trigger_user TEXT DEFAULT '',     -- 触发用户名
+  trigger_user_id TEXT DEFAULT '',  -- 触发用户 ID
+  trigger_ip TEXT DEFAULT '',       -- 触发 IP
+  trigger_action TEXT DEFAULT '',   -- 具体触发动作描述（如"记录创建", "按钮点击", "定时任务"）
+  trigger_page_path TEXT DEFAULT '', -- 触发时的页面路径（前端）
+  trigger_block_pos TEXT DEFAULT '', -- 触发时的区块位置描述（如"工单详情/右侧/翻译按钮"）
+
   -- 执行上下文
   execution_id TEXT DEFAULT '',     -- workflow_executions.id (if triggered by workflow)
   node_execution_id TEXT DEFAULT '', -- node_executions.id
@@ -148,14 +157,18 @@ CREATE TABLE IF NOT EXISTS ai_results (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
--- 审计日志
+-- 审计日志（企业级审计）
 CREATE TABLE IF NOT EXISTS audit_log (
   id TEXT PRIMARY KEY,
   result_id TEXT,
   execution_id TEXT DEFAULT '',     -- can audit workflow-level too
-  action TEXT NOT NULL,             -- created | applied | rejected | modified | retried | conversation
+  action TEXT NOT NULL,             -- created | applied | rejected | modified | retried | conversation | note
   user_name TEXT DEFAULT 'system',
+  user_id TEXT DEFAULT '',          -- 操作用户 ID
+  user_role TEXT DEFAULT '',        -- 操作用户角色（admin | operator | viewer）
+  user_ip TEXT DEFAULT '',          -- 操作来源 IP
   detail TEXT DEFAULT '',
+  note TEXT DEFAULT '',             -- 用户备注
   created_at TEXT DEFAULT (datetime('now'))
 );
 

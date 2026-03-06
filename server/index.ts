@@ -106,13 +106,13 @@ app.get('/api/results', (c) => {
 });
 
 app.patch('/api/results/:id/status', async (c) => {
-  const { status, user } = await c.req.json();
+  const { status, user, note } = await c.req.json();
   const id = c.req.param('id');
   db.prepare('UPDATE ai_results SET status = ?, applied_by = ?, applied_at = datetime("now") WHERE id = ?')
     .run(status, user || 'user', id);
   // Audit
-  db.prepare('INSERT INTO audit_log (id, result_id, action, user_name, detail) VALUES (?, ?, ?, ?, ?)')
-    .run(`aud-${uid()}`, id, status, user || 'user', `Status → ${status}`);
+  db.prepare('INSERT INTO audit_log (id, result_id, action, user_name, detail, note) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(`aud-${uid()}`, id, status, user || 'user', `Status → ${status}`, note || '');
   return c.json({ ok: true });
 });
 
@@ -127,6 +127,15 @@ app.get('/api/audit', (c) => {
     : 'SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 100';
   const rows = result_id ? db.prepare(sql).all(result_id) : db.prepare(sql).all();
   return c.json(rows);
+});
+
+// Add note to a result's audit trail
+app.post('/api/audit', async (c) => {
+  const { result_id, note, user } = await c.req.json();
+  const id = `aud-${uid()}`;
+  db.prepare('INSERT INTO audit_log (id, result_id, action, user_name, detail, note) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, result_id, 'note', user || 'user', '添加备注', note || '');
+  return c.json({ id });
 });
 
 // ============================================================
@@ -259,11 +268,13 @@ app.post('/api/results/:id/retry', async (c) => {
     const result = await ai.callGemini(prompt, task?.model_tier || 'fast');
     const newId = `res-${uid()}`;
     db.prepare(`INSERT INTO ai_results (id, task_id, task_name, action, page_id, record_id, field_name, block_id,
+      trigger_source, trigger_user, trigger_user_id, trigger_ip, trigger_action, trigger_page_path, trigger_block_pos,
       execution_id, node_execution_id, input_data, prompt_used,
       old_value, new_value, confidence, model, tokens_used, duration_ms, raw_response, status, retry_of)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 90, ?, ?, ?, ?, 'pending', ?)`)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, 90, ?, ?, ?, ?, 'pending', ?)`)
       .run(newId, original.task_id, original.task_name, original.action,
         original.page_id, original.record_id, original.field_name, original.block_id,
+        'frontend', 'user', '', '', '手动重试', original.trigger_page_path || '', original.trigger_block_pos || '',
         original.execution_id, original.node_execution_id, original.input_data, prompt,
         original.old_value, result.text, result.model, result.tokens_used, result.duration_ms, result.text,
         original.id);

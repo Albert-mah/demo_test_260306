@@ -37,6 +37,8 @@ export const getAuditLogs = (resultId?: string) => {
   const qs = resultId ? '?result_id=' + resultId : '';
   return request<AuditLogRow[]>('/audit' + qs);
 };
+export const addAuditNote = (resultId: string, note: string, user = 'user') =>
+  request<{ id: string }>('/audit', { method: 'POST', body: JSON.stringify({ result_id: resultId, note, user }) });
 
 // Alerts
 export const getAlerts = (params?: Record<string, string>) => {
@@ -153,6 +155,9 @@ export interface AITask {
 export interface AIResultRow {
   id: string; task_id: string; task_name: string; action: string;
   page_id: string; record_id: string; field_name: string; block_id: string;
+  trigger_source: string; trigger_user: string; trigger_user_id: string;
+  trigger_ip: string; trigger_action: string;
+  trigger_page_path: string; trigger_block_pos: string;
   execution_id: string; node_execution_id: string;
   input_data: string; prompt_used: string;
   old_value: string; new_value: string; confidence: number;
@@ -211,7 +216,8 @@ export interface ResultContext {
 
 export interface AuditLogRow {
   id: string; result_id: string; action: string;
-  user_name: string; detail: string; created_at: string;
+  user_name: string; user_id: string; user_role: string;
+  user_ip: string; detail: string; note: string; created_at: string;
 }
 
 export interface AlertRow {
