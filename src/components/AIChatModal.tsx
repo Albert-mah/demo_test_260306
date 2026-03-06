@@ -14,10 +14,10 @@
  * - Any future AI conversation entry point
  */
 import { useState, useRef, useEffect } from 'react';
-import { Modal, Input, Button, Upload, Tag, Space, Spin, message } from 'antd';
+import { Input, Button, Upload, Tag, Space, Spin, message } from 'antd';
 import {
   SendOutlined, PaperClipOutlined, AudioOutlined, AudioMutedOutlined,
-  CheckCircleOutlined, DeleteOutlined,
+  CheckCircleOutlined, CloseOutlined,
   FileImageOutlined, FilePdfOutlined, FileExcelOutlined, FileTextOutlined,
 } from '@ant-design/icons';
 import { AIAvatar } from './AIAvatar';
@@ -144,23 +144,40 @@ export function AIChatModal({
     setRecording(true);
   };
 
+  if (!open) return null;
+
   return (
-    <Modal
-      title={
-        <Space>
-          <AIAvatar avatar={avatar} color={color} size={28} />
-          <div>
-            <div style={{ fontWeight: 600, fontSize: 14 }}>{name}</div>
-            {subtitle && <div style={{ fontSize: 11, color: '#999', fontWeight: 400 }}>{subtitle}</div>}
-          </div>
-        </Space>
-      }
-      open={open}
-      onCancel={onClose}
-      footer={null}
-      width={width}
-      styles={{ body: { padding: 0 } }}
-    >
+    <div style={{
+      position: 'fixed',
+      right: width + 20,  // float to the left of the drawer
+      top: 80,
+      width: 380,
+      maxHeight: 'calc(100vh - 120px)',
+      borderRadius: 12,
+      boxShadow: '0 8px 32px rgba(139,92,246,0.18), 0 2px 8px rgba(0,0,0,0.08)',
+      background: '#fff',
+      zIndex: 1050,
+      display: 'flex',
+      flexDirection: 'column',
+      overflow: 'hidden',
+      border: '1px solid #e8dcff',
+    }}>
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '10px 14px',
+        background: 'linear-gradient(135deg, #faf8ff, #f0ecff)',
+        borderBottom: '1px solid #e8dcff',
+        flexShrink: 0,
+      }}>
+        <AIAvatar avatar={avatar} color={color} size={28} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>{name}</div>
+          {subtitle && <div style={{ fontSize: 11, color: '#999' }}>{subtitle}</div>}
+        </div>
+        <Button type="text" size="small" icon={<CloseOutlined />}
+          onClick={onClose} style={{ color: '#999' }} />
+      </div>
       {/* Context banner */}
       {context && (
         <div style={{
@@ -173,8 +190,9 @@ export function AIChatModal({
 
       {/* Messages area */}
       <div ref={scrollRef} style={{
-        height: 380, overflow: 'auto', padding: 16,
+        flex: 1, overflow: 'auto', padding: 12,
         background: '#fafafa',
+        minHeight: 200,
       }}>
         {messages.map((msg, i) => (
           <div key={i} style={{
@@ -316,6 +334,6 @@ export function AIChatModal({
           />
         </div>
       </div>
-    </Modal>
+    </div>
   );
 }
