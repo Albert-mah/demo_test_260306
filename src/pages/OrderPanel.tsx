@@ -1,13 +1,11 @@
 import { useEffect, useState, useMemo } from 'react';
 import {
-  Card, Table, Tag, Select, Drawer, Statistic, Row, Col, Space, Button, Input, Upload, message, Spin,
-  Modal,
+  Card, Table, Tag, Select, Drawer, Statistic, Row, Col, Space, Button, Upload, message,
 } from 'antd';
 import {
   ShoppingCartOutlined, ClockCircleOutlined, AppstoreOutlined, UploadOutlined,
   CheckCircleOutlined, FileImageOutlined, FilePdfOutlined, FileExcelOutlined,
-  FileTextOutlined, DeleteOutlined, AuditOutlined, SendOutlined,
-  PaperClipOutlined,
+  FileTextOutlined, DeleteOutlined, AuditOutlined, EditOutlined,
 } from '@ant-design/icons';
 import {
   getOrders, getCustomers, getTickets, getResults, getTasks, uploadVoucher, updateOrder,
@@ -18,6 +16,7 @@ import { AIResultPopover } from '../components/AIResultPopover';
 import { AIFloatingButton } from '../components/AIFloatingButton';
 import { CustomerHoverCard } from '../components/CustomerHoverCard';
 import { AITriggerWrapper } from '../components/AITriggers';
+import { AIChatModal, type ChatMessage } from '../components/AIChatModal';
 
 const STATUS_MAP: Record<string, { color: string; label: string }> = {
   pending: { color: 'orange', label: '待付款' },
@@ -59,13 +58,6 @@ function getFileType(name: string): string {
   return 'text';
 }
 
-interface ChatMsg {
-  role: 'user' | 'ai';
-  text: string;
-  files?: { name: string; size: number }[];
-  analysis?: Record<string, unknown>;
-}
-
 export default function OrderPanel() {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
@@ -76,14 +68,13 @@ export default function OrderPanel() {
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
   const [selectedOrder, setSelectedOrder] = useState<OrderRow | null>(null);
 
-  // File upload state
+  // Upload popup state
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<{ name: string; size: number; type: string }[]>([]);
 
-  // AI chat modal state
+  // AI chat modal state (uses shared AIChatModal)
   const [chatOpen, setChatOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
-  const [chatInput, setChatInput] = useState('');
-  const [chatFiles, setChatFiles] = useState<{ name: string; size: number }[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatResult, setChatResult] = useState<Record<string, unknown> | null>(null);
 
@@ -128,9 +119,11 @@ export default function OrderPanel() {
     return map;
   }, [aiResults]);
 
-  // Start AI proofreading chat
+  // Open upload popup then start AI chat
   const handleStartChat = () => {
-    if (!selectedOrder) return;
+    if (!selectedOrder || uploadedFiles.length === 0) return;
+    setUploadOpen(false);
+
     const filesSummary = uploadedFiles.map(f => f.name).join(', ');
     setChatMessages([{
       role: 'user',
@@ -138,12 +131,9 @@ export default function OrderPanel() {
       files: uploadedFiles.map(f => ({ name: f.name, size: f.size })),
     }]);
     setChatResult(null);
-    setChatInput('');
-    setChatFiles([]);
     setChatOpen(true);
-
-    // Auto-trigger AI analysis
     setChatLoading(true);
+
     const voucherText = `[文件上传] ${filesSummary}\n\n(Demo: 文件内容已模拟提取)\n\nSWIFT MT103\nSender: ${selectedOrder.customer_name}\nAmount: ${selectedOrder.currency} ${selectedOrder.amount}\nReference: ${selectedOrder.id}\nDate: ${new Date().toISOString().split('T')[0]}`;
 
     uploadVoucher(selectedOrder.id, voucherText).then(async () => {
@@ -151,13 +141,12 @@ export default function OrderPanel() {
       const updated = (await getOrders()).find(o => o.id === selectedOrder.id);
       if (updated) {
         setSelectedOrder(updated);
-        const analysis = parseAnalysis(updated.voucher_analysis);
-        if (analysis) {
-          setChatResult(analysis);
+        const a = parseAnalysis(updated.voucher_analysis);
+        if (a) {
+          setChatResult(a);
           setChatMessages(prev => [...prev, {
-            role: 'ai',
-            text: buildAnalysisText(analysis),
-            analysis,
+            role: 'ai', text: buildAnalysisText(a), actionable: true,
+            actionLabel: (a.match ? '确认付款' : '标记已审'),
           }]);
         }
       }
@@ -168,47 +157,30 @@ export default function OrderPanel() {
     });
   };
 
-  // Send follow-up message in chat
-  const handleChatSend = async () => {
-    if (!chatInput.trim() && chatFiles.length === 0) return;
+  // Handle chat send from AIChatModal
+  const handleChatSend = async (text: string, msgFiles?: { name: string; size: number }[]) => {
     if (!selectedOrder) return;
 
-    const userMsg: ChatMsg = {
-      role: 'user',
-      text: chatInput.trim(),
-      files: chatFiles.length > 0 ? [...chatFiles] : undefined,
-    };
-    setChatMessages(prev => [...prev, userMsg]);
-    setChatInput('');
-    setChatFiles([]);
+    setChatMessages(prev => [...prev, { role: 'user', text, files: msgFiles }]);
     setChatLoading(true);
 
-    // If new files attached, re-analyze with additional context
-    const hasNewFiles = userMsg.files && userMsg.files.length > 0;
-    const fileContext = hasNewFiles
-      ? `\n[追加文件] ${userMsg.files!.map(f => f.name).join(', ')}`
-      : '';
-
+    const fileContext = msgFiles?.length ? `\n[追加文件] ${msgFiles.map(f => f.name).join(', ')}` : '';
     try {
-      const voucherText = `${selectedOrder.voucher_text || ''}\n\n[追加对话] ${userMsg.text}${fileContext}`;
+      const voucherText = `${selectedOrder.voucher_text || ''}\n\n[追加对话] ${text}${fileContext}`;
       await uploadVoucher(selectedOrder.id, voucherText);
       await load();
       const updated = (await getOrders()).find(o => o.id === selectedOrder.id);
       if (updated) {
         setSelectedOrder(updated);
-        const analysis = parseAnalysis(updated.voucher_analysis);
-        if (analysis) {
-          setChatResult(analysis);
+        const a = parseAnalysis(updated.voucher_analysis);
+        if (a) {
+          setChatResult(a);
           setChatMessages(prev => [...prev, {
-            role: 'ai',
-            text: buildAnalysisText(analysis),
-            analysis,
+            role: 'ai', text: buildAnalysisText(a), actionable: true,
+            actionLabel: (a.match ? '确认付款' : '标记已审'),
           }]);
         } else {
-          setChatMessages(prev => [...prev, {
-            role: 'ai',
-            text: '已收到补充信息，核对结果未变化。如需进一步确认请继续提问。',
-          }]);
+          setChatMessages(prev => [...prev, { role: 'ai', text: '已收到补充信息，核对结果未变化。' }]);
         }
       }
     } catch {
@@ -217,11 +189,10 @@ export default function OrderPanel() {
     setChatLoading(false);
   };
 
-  // Apply AI result to order
+  // Apply AI result
   const handleApplyResult = async () => {
     if (!selectedOrder || !chatResult) return;
-    const match = chatResult.match as boolean | undefined;
-    if (match) {
+    if (chatResult.match) {
       await updateOrder(selectedOrder.id, { status: 'paid' } as any);
       message.success('已确认付款，订单标记为已付');
     } else {
@@ -452,96 +423,52 @@ export default function OrderPanel() {
               </Row>
             </Card>
 
-            {/* File upload area — always visible for pending orders */}
+            {/* Pending: upload trigger button */}
             {selectedOrder.status === 'pending' && !selectedOrder.voucher_text && (
-              <Card size="small"
-                title={<Space><UploadOutlined /> 上传转账凭证</Space>}
-                style={{ marginBottom: 12, borderColor: '#faad14', borderStyle: 'dashed' }}
+              <Button
+                type="primary" block icon={<UploadOutlined />}
+                onClick={() => { setUploadedFiles([]); setUploadOpen(true); }}
+                style={{ marginBottom: 12, background: '#faad14', borderColor: '#faad14' }}
               >
-                <Upload.Dragger
-                  multiple
-                  accept=".pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp,.xls,.xlsx,.csv,.txt,.doc,.docx"
-                  beforeUpload={(file) => {
-                    setUploadedFiles(prev => [...prev, { name: file.name, size: file.size, type: file.type }]);
-                    return false;
-                  }}
-                  showUploadList={false}
-                >
-                  <p style={{ marginBottom: 4 }}>
-                    <UploadOutlined style={{ fontSize: 24, color: '#faad14' }} />
-                  </p>
-                  <p style={{ fontSize: 12, color: '#666', margin: 0 }}>
-                    拖拽文件到此处，或点击选择（支持多文件）
-                  </p>
-                  <p style={{ fontSize: 11, color: '#999', margin: '4px 0 0' }}>
-                    PDF、图片、Excel、Word、文本文件
-                  </p>
-                </Upload.Dragger>
-
-                {/* Uploaded file list */}
-                {uploadedFiles.length > 0 && (
-                  <div style={{ marginTop: 8 }}>
-                    {uploadedFiles.map((f, i) => (
-                      <div key={i} style={{
-                        display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px',
-                        background: '#fafafa', borderRadius: 4, marginBottom: 4, fontSize: 12,
-                      }}>
-                        {FILE_ICON_MAP[getFileType(f.name)] || FILE_ICON_MAP.text}
-                        <span style={{ flex: 1 }}>{f.name}</span>
-                        <span style={{ color: '#999', fontSize: 11 }}>{(f.size / 1024).toFixed(1)}KB</span>
-                        <DeleteOutlined
-                          style={{ color: '#999', cursor: 'pointer', fontSize: 11 }}
-                          onClick={() => setUploadedFiles(prev => prev.filter((_, j) => j !== i))}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* AI Proofreading trigger */}
-                <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Button
-                    type="primary"
-                    icon={<AuditOutlined />}
-                    onClick={handleStartChat}
-                    disabled={uploadedFiles.length === 0}
-                    style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}
-                  >
-                    AI 校对
-                  </Button>
-                  <span style={{ fontSize: 11, color: '#999' }}>
-                    上传文件后点击，AI 将分析凭证与订单的匹配度
-                  </span>
-                </div>
-              </Card>
+                上传转账凭证并 AI 校对
+              </Button>
             )}
 
-            {/* Voucher already uploaded — show content + re-chat */}
+            {/* Voucher already uploaded — compact display + edit/re-chat buttons */}
             {selectedOrder.voucher_text && (
               <Card size="small" title="凭证内容" style={{ marginBottom: 12 }}
-                extra={selectedOrder.status === 'pending' && (
-                  <Button size="small" type="link" icon={<AuditOutlined />}
-                    onClick={() => {
-                      // Re-open chat with existing data
-                      const existingAnalysis = parseAnalysis(selectedOrder.voucher_analysis);
-                      const msgs: ChatMsg[] = [
-                        { role: 'user', text: '请校对这笔订单的转账凭证。' },
-                      ];
-                      if (existingAnalysis) {
-                        msgs.push({ role: 'ai', text: buildAnalysisText(existingAnalysis), analysis: existingAnalysis });
-                        setChatResult(existingAnalysis);
-                      }
-                      setChatMessages(msgs);
-                      setChatInput('');
-                      setChatFiles([]);
-                      setChatOpen(true);
-                    }}
-                    style={{ color: '#8b5cf6' }}>
-                    继续校对
-                  </Button>
-                )}
+                extra={
+                  <Space size={4}>
+                    {selectedOrder.status === 'pending' && (
+                      <Button size="small" type="text" icon={<EditOutlined />}
+                        onClick={() => { setUploadedFiles([]); setUploadOpen(true); }}
+                        style={{ fontSize: 11 }}>
+                        编辑附件
+                      </Button>
+                    )}
+                    <Button size="small" type="text" icon={<AuditOutlined />}
+                      onClick={() => {
+                        const existingAnalysis = parseAnalysis(selectedOrder.voucher_analysis);
+                        const msgs: ChatMessage[] = [
+                          { role: 'user', text: '请校对这笔订单的转账凭证。' },
+                        ];
+                        if (existingAnalysis) {
+                          msgs.push({
+                            role: 'ai', text: buildAnalysisText(existingAnalysis),
+                            actionable: true, actionLabel: existingAnalysis.match ? '确认付款' : '标记已审',
+                          });
+                          setChatResult(existingAnalysis);
+                        }
+                        setChatMessages(msgs);
+                        setChatOpen(true);
+                      }}
+                      style={{ fontSize: 11, color: '#8b5cf6' }}>
+                      AI 对话
+                    </Button>
+                  </Space>
+                }
               >
-                <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, maxHeight: 150, overflow: 'auto' }}>
+                <pre style={{ whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, maxHeight: 120, overflow: 'auto' }}>
                   {selectedOrder.voucher_text}
                 </pre>
               </Card>
@@ -608,16 +535,17 @@ export default function OrderPanel() {
                   }}
                   onClick={() => {
                     const existingAnalysis = analysis || (selectedResults.length > 0 ? parseAnalysis(selectedOrder.voucher_analysis) : null);
-                    const msgs: ChatMsg[] = [
+                    const msgs: ChatMessage[] = [
                       { role: 'user', text: '请校对这笔订单的转账凭证。' },
                     ];
                     if (existingAnalysis) {
-                      msgs.push({ role: 'ai', text: buildAnalysisText(existingAnalysis), analysis: existingAnalysis });
+                      msgs.push({
+                        role: 'ai', text: buildAnalysisText(existingAnalysis),
+                        actionable: true, actionLabel: existingAnalysis.match ? '确认付款' : '标记已审',
+                      });
                       setChatResult(existingAnalysis);
                     }
                     setChatMessages(msgs);
-                    setChatInput('');
-                    setChatFiles([]);
                     setChatOpen(true);
                   }}
                   title="点击与 AI 校对员对话"
@@ -647,140 +575,84 @@ export default function OrderPanel() {
         )}
       </Drawer>
 
-      {/* AI Chat Modal — proofreading conversation */}
-      <Modal
-        title={
-          <Space>
-            <AIAvatar avatar={voucherTask?.avatar || '\u{1F4B0}'} color="#8b5cf6" size={28} />
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>{voucherTask?.name || '财务核对员'}</div>
-              <div style={{ fontSize: 11, color: '#999', fontWeight: 400 }}>AI 凭证校对</div>
-            </div>
-          </Space>
+      {/* Upload popup — file management card */}
+      <Drawer
+        title={<Space><UploadOutlined /> 凭证附件管理</Space>}
+        open={uploadOpen}
+        onClose={() => setUploadOpen(false)}
+        width={420}
+        extra={
+          <Button type="primary" icon={<AuditOutlined />}
+            disabled={uploadedFiles.length === 0}
+            onClick={handleStartChat}
+            style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}>
+            AI 校对
+          </Button>
         }
-        open={chatOpen}
-        onCancel={() => setChatOpen(false)}
-        footer={null}
-        width={560}
-        styles={{ body: { padding: 0 } }}
       >
-        {/* Messages area */}
-        <div style={{
-          height: 400, overflow: 'auto', padding: 16,
-          background: '#fafafa',
-        }}>
-          {chatMessages.map((msg, i) => (
-            <div key={i} style={{
-              display: 'flex',
-              justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
-              marginBottom: 12,
-            }}>
-              {msg.role === 'ai' && (
-                <AIAvatar avatar={voucherTask?.avatar || '\u{1F4B0}'} color="#8b5cf6" size={28}
-                  style={{ marginRight: 8, flexShrink: 0, marginTop: 4 }} />
-              )}
-              <div style={{
-                maxWidth: '80%',
-                padding: '10px 14px',
-                borderRadius: msg.role === 'user' ? '12px 12px 2px 12px' : '12px 12px 12px 2px',
-                background: msg.role === 'user' ? '#e8dcff' : '#fff',
-                border: msg.role === 'ai' ? '1px solid #e8dcff' : 'none',
-                fontSize: 13, lineHeight: 1.6,
+        <Upload.Dragger
+          multiple
+          accept=".pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp,.xls,.xlsx,.csv,.txt,.doc,.docx"
+          beforeUpload={(file) => {
+            setUploadedFiles(prev => [...prev, { name: file.name, size: file.size, type: file.type }]);
+            return false;
+          }}
+          showUploadList={false}
+        >
+          <p style={{ marginBottom: 4 }}>
+            <UploadOutlined style={{ fontSize: 24, color: '#faad14' }} />
+          </p>
+          <p style={{ fontSize: 12, color: '#666', margin: 0 }}>
+            拖拽文件到此处，或点击选择（支持多文件）
+          </p>
+          <p style={{ fontSize: 11, color: '#999', margin: '4px 0 0' }}>
+            PDF、图片、Excel、Word、文本文件
+          </p>
+        </Upload.Dragger>
+
+        {uploadedFiles.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 12, color: '#999', marginBottom: 6 }}>
+              已选 {uploadedFiles.length} 个文件
+            </div>
+            {uploadedFiles.map((f, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px',
+                background: '#fafafa', borderRadius: 6, marginBottom: 4, fontSize: 12,
+                border: '1px solid #f0f0f0',
               }}>
-                {/* File attachments */}
-                {msg.files && msg.files.length > 0 && (
-                  <div style={{ marginBottom: 6 }}>
-                    {msg.files.map((f, j) => (
-                      <Tag key={j} icon={FILE_ICON_MAP[getFileType(f.name)] || FILE_ICON_MAP.text}
-                        style={{ fontSize: 11, marginBottom: 2 }}>
-                        {f.name}
-                      </Tag>
-                    ))}
-                  </div>
-                )}
-                <div style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</div>
-
-                {/* Apply button on AI analysis messages */}
-                {msg.analysis && selectedOrder?.status === 'pending' && (
-                  <div style={{ marginTop: 8, borderTop: '1px solid #f0ecff', paddingTop: 8 }}>
-                    <Button
-                      type="primary" size="small"
-                      icon={<CheckCircleOutlined />}
-                      onClick={handleApplyResult}
-                      style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}
-                    >
-                      应用结果
-                    </Button>
-                  </div>
-                )}
+                {FILE_ICON_MAP[getFileType(f.name)] || FILE_ICON_MAP.text}
+                <span style={{ flex: 1 }}>{f.name}</span>
+                <span style={{ color: '#999', fontSize: 11 }}>{(f.size / 1024).toFixed(1)}KB</span>
+                <DeleteOutlined
+                  style={{ color: '#ff4d4f', cursor: 'pointer', fontSize: 12 }}
+                  onClick={() => setUploadedFiles(prev => prev.filter((_, j) => j !== i))}
+                />
               </div>
-            </div>
-          ))}
-
-          {chatLoading && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-              <AIAvatar avatar={voucherTask?.avatar || '\u{1F4B0}'} color="#8b5cf6" size={28} />
-              <div style={{
-                padding: '10px 14px', borderRadius: '12px 12px 12px 2px',
-                background: '#fff', border: '1px solid #e8dcff',
-              }}>
-                <Spin size="small" /> <span style={{ fontSize: 12, color: '#999', marginLeft: 6 }}>分析中...</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Chat input bar with file attachment */}
-        <div style={{
-          padding: '12px 16px', borderTop: '1px solid #f0f0f0',
-          background: '#fff',
-        }}>
-          {/* Attached files in chat */}
-          {chatFiles.length > 0 && (
-            <div style={{ marginBottom: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {chatFiles.map((f, i) => (
-                <Tag key={i} closable onClose={() => setChatFiles(prev => prev.filter((_, j) => j !== i))}
-                  icon={FILE_ICON_MAP[getFileType(f.name)] || FILE_ICON_MAP.text}
-                  style={{ fontSize: 11 }}>
-                  {f.name}
-                </Tag>
-              ))}
-            </div>
-          )}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-            <Upload
-              multiple
-              beforeUpload={(file) => {
-                setChatFiles(prev => [...prev, { name: file.name, size: file.size }]);
-                return false;
-              }}
-              showUploadList={false}
-            >
-              <Button icon={<PaperClipOutlined />} size="small" type="text"
-                style={{ color: '#999' }} title="添加附件" />
-            </Upload>
-            <Input.TextArea
-              value={chatInput}
-              onChange={e => setChatInput(e.target.value)}
-              placeholder="输入补充信息或追问..."
-              autoSize={{ minRows: 1, maxRows: 3 }}
-              style={{ flex: 1, fontSize: 13 }}
-              onPressEnter={(e) => {
-                if (!e.shiftKey) {
-                  e.preventDefault();
-                  handleChatSend();
-                }
-              }}
-            />
-            <Button
-              type="primary" icon={<SendOutlined />} size="small"
-              onClick={handleChatSend}
-              disabled={chatLoading || (!chatInput.trim() && chatFiles.length === 0)}
-              style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}
-            />
+            ))}
           </div>
+        )}
+
+        <div style={{ marginTop: 16, fontSize: 11, color: '#999' }}>
+          上传凭证文件后点击「AI 校对」，系统将自动分析凭证与订单的匹配度，并进入对话式交互。
         </div>
-      </Modal>
+      </Drawer>
+
+      {/* AI Chat Modal — shared component with file upload + voice */}
+      <AIChatModal
+        open={chatOpen}
+        onClose={() => setChatOpen(false)}
+        avatar={voucherTask?.avatar || '\u{1F4B0}'}
+        color="#8b5cf6"
+        name={voucherTask?.name || '财务核对员'}
+        subtitle="AI 凭证校对"
+        messages={chatMessages}
+        loading={chatLoading}
+        onSend={handleChatSend}
+        onAction={handleApplyResult}
+        placeholder="补充信息或追问，可添加附件或语音..."
+        context={selectedOrder ? `订单: ${selectedOrder.id} | ${formatAmount(selectedOrder.amount, selectedOrder.currency)}` : undefined}
+      />
 
       {/* AI Floating Button */}
       <AIFloatingButton

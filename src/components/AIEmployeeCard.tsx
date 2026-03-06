@@ -13,15 +13,16 @@
  */
 import { useState } from 'react';
 import {
-  Button, Tag, Input, Space, Spin, message, Tooltip,
+  Button, Tag, Input, Space, message,
 } from 'antd';
 import {
   CheckOutlined, CloseOutlined, RedoOutlined, EditOutlined,
-  MessageOutlined, SendOutlined, CopyOutlined,
+  MessageOutlined, CopyOutlined,
 } from '@ant-design/icons';
 import { updateResultStatus, retryResult, type AIResultRow, type AITask } from '../api';
 import { AIAvatar, AITeamAvatars } from './AIAvatar';
 import { AIResultPopover } from './AIResultPopover';
+import { AIChatModal, type ChatMessage } from './AIChatModal';
 
 // ============================================================
 // Shared types & helpers
@@ -99,8 +100,8 @@ export function AIEmployeeCard({
   style,
 }: AIEmployeeCardProps) {
   const [chatOpen, setChatOpen] = useState(false);
-  const [chatInput, setChatInput] = useState('');
-  const [chatHistory, setChatHistory] = useState<{ role: string; text: string }[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
 
@@ -136,26 +137,25 @@ export function AIEmployeeCard({
     setEditingId(null);
   };
 
-  const handleChat = async () => {
-    if (!chatInput.trim()) return;
-    const text = chatInput.trim();
-    setChatHistory(prev => [...prev, { role: 'user', text }]);
-    setChatInput('');
+  const handleChatSend = async (text: string, files?: { name: string; size: number }[]) => {
+    const userMsg: ChatMessage = { role: 'user', text, files };
+    setChatMessages(prev => [...prev, userMsg]);
+    setChatLoading(true);
 
     if (onChat) {
-      const reply = await onChat(text);
+      const fileContext = files?.length ? `\n[附件] ${files.map(f => f.name).join(', ')}` : '';
+      const reply = await onChat(text + fileContext);
       if (reply) {
-        setChatHistory(prev => [...prev, { role: 'ai', text: reply }]);
+        setChatMessages(prev => [...prev, { role: 'ai', text: reply }]);
       }
     } else {
-      // Default mock response
-      setTimeout(() => {
-        setChatHistory(prev => [...prev, {
-          role: 'ai',
-          text: '(AI 对话功能接入中... 实际使用时会携带完整上下文调用 AI)',
-        }]);
-      }, 500);
+      await new Promise(r => setTimeout(r, 500));
+      setChatMessages(prev => [...prev, {
+        role: 'ai',
+        text: '(AI 对话功能接入中... 实际使用时会携带完整上下文调用 AI)',
+      }]);
     }
+    setChatLoading(false);
   };
 
   // Status display
@@ -294,55 +294,33 @@ export function AIEmployeeCard({
         {/* Extra actions (e.g. "confirm payment" button) */}
         {extraActions && <div style={{ marginBottom: 8 }}>{extraActions}</div>}
 
-        {/* Conversation area */}
+        {/* Conversation trigger — opens modal */}
         {showChat && (
-          chatOpen ? (
-            <div style={{ background: '#faf8ff', borderRadius: 6, padding: 8, border: '1px solid #f0ecff' }}>
-              <div style={{ fontSize: 11, color: '#8b5cf6', fontWeight: 600, marginBottom: 6 }}>
-                <MessageOutlined /> 对话微调
-                {context && <span style={{ color: '#bbb', fontWeight: 400 }}> · 已携带上下文</span>}
-              </div>
-
-              {chatHistory.length > 0 && (
-                <div style={{ maxHeight: 160, overflow: 'auto', marginBottom: 6 }}>
-                  {chatHistory.map((msg, i) => (
-                    <div key={i} style={{
-                      padding: '4px 8px', marginBottom: 4, borderRadius: 4,
-                      fontSize: 11, lineHeight: 1.5, whiteSpace: 'pre-wrap',
-                      ...(msg.role === 'user'
-                        ? { background: '#e8e0ff', color: '#4c1d95', textAlign: 'right' as const }
-                        : { background: '#fff', color: '#444', border: '1px solid #f0f0f0' }
-                      ),
-                    }}>
-                      {msg.text}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <Space.Compact style={{ width: '100%' }}>
-                <Input
-                  size="small"
-                  value={chatInput}
-                  onChange={e => setChatInput(e.target.value)}
-                  placeholder={chatPlaceholder || '补充要求或提问...'}
-                  onPressEnter={handleChat}
-                />
-                <Button size="small" type="primary" icon={<SendOutlined />}
-                  style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}
-                  onClick={handleChat} />
-              </Space.Compact>
-            </div>
-          ) : (
-            <Button size="small" type="text" icon={<MessageOutlined />}
-              style={{ color: '#8b5cf6', fontSize: 11, padding: '2px 4px' }}
-              onClick={() => setChatOpen(true)}>
-              展开对话微调
-              {context && <span style={{ color: '#bbb' }}> (含上下文)</span>}
-            </Button>
-          )
+          <Button size="small" type="text" icon={<MessageOutlined />}
+            style={{ color: '#8b5cf6', fontSize: 11, padding: '2px 4px' }}
+            onClick={() => setChatOpen(true)}>
+            对话微调
+            {context && <span style={{ color: '#bbb' }}> (含上下文)</span>}
+          </Button>
         )}
       </div>
+
+      {/* Chat modal */}
+      {showChat && (
+        <AIChatModal
+          open={chatOpen}
+          onClose={() => setChatOpen(false)}
+          avatar={displayAvatar}
+          color={displayColor}
+          name={name}
+          subtitle="对话微调"
+          messages={chatMessages}
+          loading={chatLoading}
+          onSend={handleChatSend}
+          placeholder={chatPlaceholder || '补充要求或提问，可添加附件或语音...'}
+          context={context}
+        />
+      )}
     </div>
   );
 }
