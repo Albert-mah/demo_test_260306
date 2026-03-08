@@ -150,7 +150,8 @@ CREATE TABLE IF NOT EXISTS ai_results (
   applied_by TEXT DEFAULT '',
   applied_at TEXT DEFAULT '',
 
-  -- 重试 & 对话
+  -- 协作 & 重试 & 对话
+  collaboration_id TEXT DEFAULT '', -- 非空时表示协作组，同组结果必须整体采纳/回退
   retry_of TEXT DEFAULT '',         -- 如果是重试，指向原 result id
   conversation_id TEXT DEFAULT '',  -- 关联的对话 id（如果用户开启了对话）
 

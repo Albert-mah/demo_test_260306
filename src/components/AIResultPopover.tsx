@@ -23,7 +23,7 @@ import {
 } from '@ant-design/icons';
 import {
   updateResultStatus, retryResult, getResultContext, addAuditNote,
-  getResults as fetchResults,
+  getResults as fetchResults, batchUpdateStatus,
   type AIResultRow, type AITask, type ResultContext,
 } from '../api';
 import { AIAvatar, AIFusedAvatar } from './AIAvatar';
@@ -202,9 +202,21 @@ export function AIResultPopover({
   const isForm = mode === 'form' || results.length > 2;
   const popoverWidth = isForm ? 420 : 360;
 
-  // Group results by employee for collaboration detection
-  const resultsByEmp = new Map<string, { avatar: string; color: string; name: string; items: AIResultRow[] }>();
+  // Separate collaboration groups from concurrent results
+  const collabGroups = new Map<string, AIResultRow[]>();
+  const concurrentResults: AIResultRow[] = [];
   for (const r of results) {
+    if (r.collaboration_id) {
+      if (!collabGroups.has(r.collaboration_id)) collabGroups.set(r.collaboration_id, []);
+      collabGroups.get(r.collaboration_id)!.push(r);
+    } else {
+      concurrentResults.push(r);
+    }
+  }
+
+  // Group concurrent results by employee for multi-employee display
+  const resultsByEmp = new Map<string, { avatar: string; color: string; name: string; items: AIResultRow[] }>();
+  for (const r of concurrentResults) {
     const task = resolveTask(r.task_id);
     const key = task?.name || r.task_name;
     if (!resultsByEmp.has(key)) {
@@ -215,20 +227,30 @@ export function AIResultPopover({
     }
     resultsByEmp.get(key)!.items.push(r);
   }
-  const isCollab = resultsByEmp.size > 1;
+  const isConcurrentMultiEmp = resultsByEmp.size > 1;
   const empEntries = Array.from(resultsByEmp.entries());
 
-  const renderResultRow = (r: AIResultRow, empColor: string, showEmpBadge: boolean) => {
+  // Batch status for collaboration groups
+  const handleCollabStatus = async (collabId: string, status: string) => {
+    const group = collabGroups.get(collabId);
+    if (!group) return;
+    await batchUpdateStatus(group.map(r => r.id), status);
+    message.success(status === 'applied' ? '协作组已整体采纳' : '协作组已整体回退');
+    onRefresh?.();
+  };
+
+  const renderResultRow = (r: AIResultRow, empColor: string, showEmpBadge: boolean, hideActions = false) => {
     const task = resolveTask(r.task_id);
     const statusInfo = STATUS_MAP[r.status] || STATUS_MAP.pending;
     const isEditing = editingId === r.id;
     const isLongValue = (r.new_value?.length || 0) > 100;
+    const isMultiEmp = isConcurrentMultiEmp || hideActions; // collab mode also shows badges
 
     return (
       <div key={r.id} style={{
         padding: '8px 6px',
-        borderLeft: isCollab ? `3px solid ${empColor}` : undefined,
-        background: isCollab ? `${empColor}06` : undefined,
+        borderLeft: isMultiEmp ? `3px solid ${empColor}` : undefined,
+        background: isMultiEmp ? `${empColor}06` : undefined,
       }}>
         {/* Header: avatar + name + field + status */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
@@ -266,7 +288,7 @@ export function AIResultPopover({
         ) : (
           <div style={{
             color: '#444', whiteSpace: 'pre-wrap', marginBottom: 6,
-            background: isCollab ? '#fff' : '#faf8ff',
+            background: isMultiEmp ? '#fff' : '#faf8ff',
             borderLeft: `2px solid ${empColor}80`,
             padding: '4px 8px', borderRadius: '0 4px 4px 0',
             maxHeight: isForm ? 120 : 80, overflow: 'auto', lineHeight: 1.5,
@@ -283,8 +305,8 @@ export function AIResultPopover({
           <span>{r.duration_ms}ms</span>
         </div>
 
-        {/* Action bar */}
-        {!isEditing && (
+        {/* Action bar — hidden for collab group items (group has unified actions) */}
+        {!isEditing && !hideActions && (
           <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
             {r.status === 'pending' && (
               <>
@@ -302,6 +324,17 @@ export function AIResultPopover({
             <Button size="small" type="text" icon={<RedoOutlined />}
               style={{ fontSize: 11, color: '#8b5cf6' }}
               onClick={() => handleRetry(r.id)}>重跑</Button>
+            <Button size="small" type="text" icon={<CopyOutlined />}
+              style={{ fontSize: 11 }}
+              onClick={() => handleCopy(r.new_value)} />
+            <Button size="small" type="text" icon={<EyeOutlined />}
+              style={{ fontSize: 11, color: '#8b5cf6' }}
+              onClick={() => openDetail(r.id)}>详情</Button>
+          </div>
+        )}
+        {/* Collab row: only show detail button */}
+        {!isEditing && hideActions && (
+          <div style={{ display: 'flex', gap: 2 }}>
             <Button size="small" type="text" icon={<CopyOutlined />}
               style={{ fontSize: 11 }}
               onClick={() => handleCopy(r.new_value)} />
@@ -380,42 +413,108 @@ export function AIResultPopover({
 
   const currentTabContent = (
     <div>
-      {/* Collaboration banner */}
-      {isCollab && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '6px 8px', marginBottom: 4,
-          background: 'linear-gradient(90deg, #f3eeff 0%, #eef4ff 50%, #f0fff4 100%)',
-          borderRadius: 4,
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-            {empEntries.map(([name, emp], i) => (
-              <div key={name} style={{
-                marginLeft: i > 0 ? -6 : 0, zIndex: empEntries.length - i,
-                position: 'relative', borderRadius: '50%', border: '2px solid #fff',
-                display: 'inline-flex',
-              }}>
-                <AIAvatar avatar={emp.avatar} color={emp.color} size={20} />
+      {/* ── Collaboration groups (统一边框，整体操作) ── */}
+      {Array.from(collabGroups.entries()).map(([collabId, group]) => {
+        // Collect unique employees in this collab group
+        const collabEmps = new Map<string, { avatar: string; color: string; name: string }>();
+        for (const r of group) {
+          const task = resolveTask(r.task_id);
+          const key = task?.name || r.task_name;
+          if (!collabEmps.has(key)) {
+            collabEmps.set(key, { avatar: task?.avatar || '\u{1F916}', color: task?.avatar_color || '#8b5cf6', name: key });
+          }
+        }
+        const collabEmpList = Array.from(collabEmps.values());
+        const hasPending = group.some(r => r.status === 'pending');
+
+        return (
+          <div key={collabId} style={{
+            marginBottom: 8, borderRadius: 6, overflow: 'hidden',
+            border: '2px solid #e8d5f5',
+            background: 'linear-gradient(135deg, #faf5ff 0%, #f0f7ff 100%)',
+          }}>
+            {/* Collab header */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '5px 8px',
+              background: 'linear-gradient(90deg, #f3eeff 0%, #eef4ff 50%, #f0fff4 100%)',
+              borderBottom: '1px solid #e8d5f5',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                {collabEmpList.map((emp, i) => (
+                  <div key={emp.name} style={{
+                    marginLeft: i > 0 ? -5 : 0, zIndex: collabEmpList.length - i,
+                    position: 'relative', borderRadius: '50%', border: '2px solid #fff',
+                    display: 'inline-flex',
+                  }}>
+                    <AIAvatar avatar={emp.avatar} color={emp.color} size={18} />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <div style={{ fontSize: 11, flex: 1, minWidth: 0 }}>
-            <TeamOutlined style={{ color: '#8b5cf6', marginRight: 3 }} />
-            <span style={{ fontWeight: 600 }}>协作处理</span>
-            <span style={{ color: '#999', marginLeft: 4 }}>
-              {empEntries.map(([name, emp], i) => (
-                <span key={name}>
-                  {i > 0 && ' / '}
-                  <span style={{ color: emp.color, fontWeight: 500 }}>{name}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Tag color="purple" style={{ fontSize: 9, lineHeight: '14px', margin: 0 }}>
+                  <TeamOutlined /> 协作组
+                </Tag>
+                <span style={{ fontSize: 10, color: '#999', marginLeft: 4 }}>
+                  {collabEmpList.map((emp, i) => (
+                    <span key={emp.name}>
+                      {i > 0 && ' + '}
+                      <span style={{ color: emp.color, fontWeight: 500 }}>{emp.name}</span>
+                    </span>
+                  ))}
                 </span>
-              ))}
-            </span>
+              </div>
+              <span style={{ fontSize: 9, color: '#bbb' }}>{group.length} 项</span>
+            </div>
+            {/* Collab result rows — no individual accept/reject */}
+            {group.map((r) => {
+              const task = resolveTask(r.task_id);
+              const empColor = task?.avatar_color || '#8b5cf6';
+              return (
+                <div key={r.id} style={{ borderBottom: '1px solid #f0eaf8' }}>
+                  {renderResultRow(r, empColor, true, true)}
+                </div>
+              );
+            })}
+            {/* Unified action bar */}
+            <div style={{
+              padding: '6px 8px',
+              borderTop: '1px solid #e8d5f5',
+              background: '#faf5ff',
+              display: 'flex', gap: 4, alignItems: 'center',
+            }}>
+              {hasPending ? (
+                <>
+                  <Button size="small" type="primary" icon={<CheckOutlined />}
+                    style={{ background: '#52c41a', borderColor: '#52c41a', fontSize: 11 }}
+                    onClick={() => handleCollabStatus(collabId, 'applied')}>
+                    整体采纳
+                  </Button>
+                  <Button size="small" danger icon={<CloseOutlined />}
+                    style={{ fontSize: 11 }}
+                    onClick={() => handleCollabStatus(collabId, 'rejected')}>
+                    整体回退
+                  </Button>
+                </>
+              ) : (
+                <Tag color={STATUS_MAP[group[0]?.status]?.color} style={{ fontSize: 10 }}>
+                  {STATUS_MAP[group[0]?.status]?.label || group[0]?.status}
+                </Tag>
+              )}
+              <span style={{ flex: 1 }} />
+              <span style={{ fontSize: 9, color: '#bbb' }}>不可单独采纳</span>
+            </div>
           </div>
+        );
+      })}
+
+      {/* ── Concurrent results (独立标记，各自紫色区域) ── */}
+      {isConcurrentMultiEmp && concurrentResults.length > 0 && collabGroups.size > 0 && (
+        <div style={{ fontSize: 10, color: '#999', padding: '4px 0 2px', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <ThunderboltOutlined /> 并发结果 — 独立操作
         </div>
       )}
-
-      {/* Results list */}
-      {isCollab ? (
+      {isConcurrentMultiEmp ? (
         empEntries.map(([empName, emp]) =>
           emp.items.map((r) => (
             <div key={r.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
@@ -424,12 +523,12 @@ export function AIResultPopover({
           ))
         )
       ) : (
-        results.map((r, idx) => {
+        concurrentResults.map((r, idx) => {
           const task = resolveTask(r.task_id);
           const empColor = task?.avatar_color || '#8b5cf6';
           return (
             <div key={r.id} style={{
-              borderBottom: idx < results.length - 1 ? '1px solid #f0f0f0' : 'none',
+              borderBottom: idx < concurrentResults.length - 1 ? '1px solid #f0f0f0' : 'none',
             }}>
               {renderResultRow(r, empColor, false)}
             </div>
@@ -437,7 +536,7 @@ export function AIResultPopover({
         })
       )}
 
-      <Divider style={{ margin: '6px 0' }} />
+      {results.length > 0 && <Divider style={{ margin: '6px 0' }} />}
 
       {/* Context panel */}
       {context && (

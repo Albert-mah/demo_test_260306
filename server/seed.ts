@@ -73,6 +73,7 @@ function enrichResult(r: Record<string, unknown>, page: string, triggerType: key
   const promptGen = PROMPT_TEMPLATES[taskId];
   const { input_data, prompt_used } = promptGen ? promptGen(r) : { input_data: '{}', prompt_used: '' };
   return {
+    collaboration_id: '', // default: concurrent (independent)
     ...r,
     ...t,
     input_data,
@@ -133,6 +134,75 @@ export function seed() {
       input_fields: '["content","customer_lang","knowledge_context"]', output_fields: '["reply_draft"]',
       output_format: 'text', retry_count: 1, timeout_ms: 30000,
     },
+    // ---- 翻译专员: 额外任务 ----
+    {
+      id: 'task-translate-formal', name: '翻译专员', description: '正式商务文档翻译（保留格式）',
+      category: 'builtin', tags: '["通用","翻译"]',
+      trigger_type: 'button', trigger_config: '{}',
+      action: 'translate', model_tier: 'pro',
+      avatar: '🌐', avatar_color: '#1677ff',
+      prompt_template: '将以下商务文档翻译为{{target_lang}}，保留原始格式和排版：\n\n{{content}}',
+      prompt_system: '你是商务文档翻译专家。保留原文格式（标题、列表、表格），术语统一，语气正式。',
+      input_fields: '["content","target_lang"]', output_fields: '["translated_text"]',
+      output_format: 'markdown', retry_count: 1, timeout_ms: 30000,
+    },
+    {
+      id: 'task-translate-detect', name: '翻译专员', description: '检测文本语言',
+      category: 'builtin', tags: '["通用","翻译"]',
+      trigger_type: 'record_create', trigger_config: '{}',
+      action: 'classify', model_tier: 'lite',
+      avatar: '🌐', avatar_color: '#1677ff',
+      prompt_template: '检测以下文本的语言，只输出语言名称（如：英语、日语、德语）：\n\n{{content}}',
+      prompt_system: '你是语言检测系统。只输出语言名称，不要解释。',
+      input_fields: '["content"]', output_fields: '["language"]',
+      output_format: 'text', retry_count: 0, timeout_ms: 5000,
+    },
+    // ---- 分类专员: 额外任务 ----
+    {
+      id: 'task-classify-sentiment', name: '分类专员', description: '分析客户情绪（正面/中性/负面）',
+      category: 'builtin', tags: '["工单","分类"]',
+      trigger_type: 'record_create', trigger_config: '{}',
+      action: 'classify', model_tier: 'lite',
+      avatar: '🏷️', avatar_color: '#722ed1',
+      prompt_template: '分析以下文本的客户情绪。只输出：正面 | 中性 | 负面 | 愤怒\n\n{{content}}',
+      prompt_system: '你是情绪分析系统。只输出情绪标签，不要解释。',
+      input_fields: '["content"]', output_fields: '["sentiment"]',
+      output_format: 'text', retry_count: 0, timeout_ms: 8000,
+    },
+    {
+      id: 'task-classify-intent', name: '分类专员', description: '识别用户意图（咨询/投诉/购买/续约等）',
+      category: 'builtin', tags: '["工单","分类"]',
+      trigger_type: 'record_create', trigger_config: '{}',
+      action: 'classify', model_tier: 'lite',
+      avatar: '🏷️', avatar_color: '#722ed1',
+      prompt_template: '识别以下文本的用户意图。只输出一个标签：咨询 | 投诉 | 购买 | 续约 | 退款 | 技术支持 | 合作 | 其他\n\n{{content}}',
+      prompt_system: '你是意图识别系统。只输出意图标签。',
+      input_fields: '["content"]', output_fields: '["intent"]',
+      output_format: 'text', retry_count: 0, timeout_ms: 8000,
+    },
+    // ---- 回复助手: 额外任务 ----
+    {
+      id: 'task-reply-followup', name: '回复助手', description: '生成跟进邮件（催单/确认/感谢）',
+      category: 'builtin', tags: '["工单","生成"]',
+      trigger_type: 'button', trigger_config: '{}',
+      action: 'generate', model_tier: 'fast',
+      avatar: '✍️', avatar_color: '#52c41a',
+      prompt_template: '根据工单历史，生成一封{{followup_type}}邮件。\n\n工单内容：{{content}}\n历史回复：{{history}}\n客户语言：{{customer_lang}}',
+      prompt_system: '你是专业客服。跟进邮件要简洁、有明确下一步行动。',
+      input_fields: '["content","history","customer_lang","followup_type"]', output_fields: '["followup_email"]',
+      output_format: 'text', retry_count: 1, timeout_ms: 20000,
+    },
+    {
+      id: 'task-reply-summary', name: '回复助手', description: '总结工单对话并提取待办事项',
+      category: 'builtin', tags: '["工单","摘要"]',
+      trigger_type: 'button', trigger_config: '{}',
+      action: 'summarize', model_tier: 'fast',
+      avatar: '✍️', avatar_color: '#52c41a',
+      prompt_template: '总结以下工单对话，提取：\n1. 问题摘要\n2. 当前状态\n3. 待办事项\n4. 关键决策\n\n{{content}}\n{{replies}}',
+      prompt_system: '你是工单分析助手。总结要简洁，待办要可执行。',
+      input_fields: '["content","replies"]', output_fields: '["summary","todos"]',
+      output_format: 'markdown', retry_count: 0, timeout_ms: 15000,
+    },
     {
       id: 'task-knowledge', name: '知识管家', description: '分析已解决工单是否值得积累为知识',
       category: 'builtin', tags: '["工单","知识"]',
@@ -144,6 +214,30 @@ export function seed() {
       input_fields: '["content","resolution"]', output_fields: '["knowledge_suggestion"]',
       output_format: 'json', retry_count: 0, timeout_ms: 20000,
     },
+    // ---- 知识管家: 额外任务 ----
+    {
+      id: 'task-knowledge-search', name: '知识管家', description: '从知识库中检索相似案例',
+      category: 'builtin', tags: '["工单","知识"]',
+      trigger_type: 'record_create', trigger_config: '{}',
+      action: 'extract', model_tier: 'fast',
+      avatar: '📚', avatar_color: '#faad14',
+      prompt_template: '从知识库中找到与以下工单最相似的 3 个案例，输出JSON数组：\n[{"title":"标题","similarity":0-100,"solution":"解决方案摘要"}]\n\n工单内容：{{content}}',
+      prompt_system: '你是知识检索系统。返回最相关的历史案例。',
+      input_fields: '["content"]', output_fields: '["similar_cases"]',
+      output_format: 'json', retry_count: 1, timeout_ms: 15000,
+    },
+    {
+      id: 'task-knowledge-tag', name: '知识管家', description: '为知识条目自动打标签和分类',
+      category: 'builtin', tags: '["知识","分类"]',
+      trigger_type: 'record_create', trigger_config: '{}',
+      action: 'classify', model_tier: 'lite',
+      avatar: '📚', avatar_color: '#faad14',
+      prompt_template: '为以下知识条目生成标签和分类。输出JSON：\n{"category":"分类","tags":["标签1","标签2"],"difficulty":"easy|medium|hard"}\n\n标题：{{title}}\n内容：{{content}}',
+      prompt_system: '你是知识分类系统。',
+      input_fields: '["title","content"]', output_fields: '["category","tags"]',
+      output_format: 'json', retry_count: 0, timeout_ms: 10000,
+    },
+    // ---- 情报分析师: 额外任务 ----
     {
       id: 'task-customer-bg', name: '情报分析师', description: '调查客户公司背景信息',
       category: 'builtin', tags: '["客户","调查"]',
@@ -155,6 +249,19 @@ export function seed() {
       input_fields: '["name","country","additional_info"]', output_fields: '["background","value_rating"]',
       output_format: 'text', retry_count: 1, timeout_ms: 20000,
     },
+    // ---- 情报分析师: 额外任务 ----
+    {
+      id: 'task-customer-risk', name: '情报分析师', description: '评估客户信用和合作风险',
+      category: 'builtin', tags: '["客户","决策"]',
+      trigger_type: 'record_create', trigger_config: '{}',
+      action: 'decide', model_tier: 'fast',
+      avatar: '🔍', avatar_color: '#13c2c2',
+      prompt_template: '评估客户信用风险。输出JSON：\n{"risk_level":"high|medium|low","credit_score":0-100,"factors":[],"recommendation":"建议"}\n\n客户：{{name}}\n订单历史：{{order_history}}\n付款记录：{{payment_history}}',
+      prompt_system: '你是信用风险评估分析师。',
+      input_fields: '["name","order_history","payment_history"]', output_fields: '["risk_assessment"]',
+      output_format: 'json', retry_count: 0, timeout_ms: 15000,
+    },
+    // ---- 邮件秘书: 额外任务 ----
     {
       id: 'task-email-summary', name: '邮件秘书', description: '总结客户邮件往来',
       category: 'builtin', tags: '["邮件","摘要"]',
@@ -166,6 +273,19 @@ export function seed() {
       input_fields: '["emails"]', output_fields: '["summary"]',
       output_format: 'markdown', retry_count: 0, timeout_ms: 30000,
     },
+    // ---- 邮件秘书: 额外任务 ----
+    {
+      id: 'task-email-draft', name: '邮件秘书', description: '根据意图草拟商务邮件',
+      category: 'builtin', tags: '["邮件","生成"]',
+      trigger_type: 'button', trigger_config: '{}',
+      action: 'generate', model_tier: 'fast',
+      avatar: '📧', avatar_color: '#eb2f96',
+      prompt_template: '根据以下意图为客户草拟一封{{language}}商务邮件：\n\n意图：{{intent}}\n客户：{{customer_name}}\n历史上下文：{{context}}',
+      prompt_system: '你是商务邮件撰写助手。邮件要专业、简洁、有明确行动项。',
+      input_fields: '["intent","customer_name","context","language"]', output_fields: '["email_draft"]',
+      output_format: 'text', retry_count: 1, timeout_ms: 20000,
+    },
+    // ---- 财务核对员: 额外任务 ----
     {
       id: 'task-voucher', name: '财务核对员', description: '分析转账凭证与订单匹配度',
       category: 'builtin', tags: '["订单","校验"]',
@@ -177,6 +297,19 @@ export function seed() {
       input_fields: '["voucher_text","order_id","amount","currency","customer_name"]', output_fields: '["match_result"]',
       output_format: 'json', retry_count: 1, timeout_ms: 15000,
     },
+    // ---- 财务核对员: 额外任务 ----
+    {
+      id: 'task-invoice-extract', name: '财务核对员', description: '从发票/单据中提取结构化数据',
+      category: 'builtin', tags: '["订单","提取"]',
+      trigger_type: 'field_change', trigger_config: '{}',
+      action: 'extract', model_tier: 'fast',
+      avatar: '💰', avatar_color: '#faad14',
+      prompt_template: '从以下单据中提取结构化数据。输出JSON：\n{"vendor":"供应商","date":"日期","items":[{"name":"品名","qty":数量,"unit_price":单价,"amount":金额}],"total":总计,"currency":"币种"}\n\n单据内容：{{document_text}}',
+      prompt_system: '你是单据解析专家。确保金额精确，品名规范化。',
+      input_fields: '["document_text"]', output_fields: '["extracted_data"]',
+      output_format: 'json', retry_count: 1, timeout_ms: 20000,
+    },
+    // ---- 客户成功顾问: 额外任务 ----
     {
       id: 'task-satisfaction', name: '客户成功顾问', description: '分析客户满意度和流失风险',
       category: 'builtin', tags: '["客户","决策"]',
@@ -188,6 +321,19 @@ export function seed() {
       input_fields: '["customer_name","ticket_summary","email_summary"]', output_fields: '["satisfaction_result"]',
       output_format: 'json', retry_count: 0, timeout_ms: 20000,
     },
+    // ---- 客户成功顾问: 额外任务 ----
+    {
+      id: 'task-renewal', name: '客户成功顾问', description: '生成续约建议和定价方案',
+      category: 'builtin', tags: '["客户","生成"]',
+      trigger_type: 'schedule', trigger_config: '{}',
+      action: 'generate', model_tier: 'pro',
+      avatar: '😊', avatar_color: '#52c41a',
+      prompt_template: '为即将到期的客户生成续约方案。输出JSON：\n{"recommendation":"续约|升级|降级|放弃","pricing":{"current":当前价,"suggested":建议价,"discount":"折扣理由"},"talking_points":[]}\n\n客户：{{customer_name}}\n当前方案：{{current_plan}}\n使用情况：{{usage_stats}}',
+      prompt_system: '你是客户续约策略顾问。目标是最大化续约率和客户价值。',
+      input_fields: '["customer_name","current_plan","usage_stats"]', output_fields: '["renewal_plan"]',
+      output_format: 'json', retry_count: 0, timeout_ms: 25000,
+    },
+    // ---- 合规审查员: 额外任务 ----
     {
       id: 'task-violation', name: '合规审查员', description: '检测客户是否违规使用',
       category: 'builtin', tags: '["客户","校验"]',
@@ -198,6 +344,30 @@ export function seed() {
       prompt_system: '你是许可证合规分析师。',
       input_fields: '["customer_name","license_type","app_info"]', output_fields: '["violation_result"]',
       output_format: 'json', retry_count: 0, timeout_ms: 15000,
+    },
+    // ---- 合规审查员: 额外任务 ----
+    {
+      id: 'task-data-privacy', name: '合规审查员', description: '检查数据隐私合规性（GDPR/个人信息）',
+      category: 'builtin', tags: '["合规","校验"]',
+      trigger_type: 'record_create', trigger_config: '{}',
+      action: 'validate', model_tier: 'fast',
+      avatar: '🛡️', avatar_color: '#f5222d',
+      prompt_template: '检查以下内容是否包含个人隐私数据或违反数据保护规定。输出JSON：\n{"has_pii":true/false,"pii_types":[],"risk_level":"high|medium|low","recommendation":"建议"}\n\n内容：{{content}}\n适用法规：{{regulation}}',
+      prompt_system: '你是数据隐私合规专家。',
+      input_fields: '["content","regulation"]', output_fields: '["privacy_check"]',
+      output_format: 'json', retry_count: 0, timeout_ms: 15000,
+    },
+    // ---- 优先级顾问: 额外任务 ----
+    {
+      id: 'task-priority-batch', name: '优先级顾问', description: '批量评估待处理工单优先级排序',
+      category: 'builtin', tags: '["工单","决策"]',
+      trigger_type: 'schedule', trigger_config: '{}',
+      action: 'decide', model_tier: 'fast',
+      avatar: '🚦', avatar_color: '#fa541c',
+      prompt_template: '对以下待处理工单按紧急程度排序。输出JSON数组：\n[{"id":"工单ID","priority":"P1|P2|P3|P4","reason":"原因"}]\n\n工单列表：\n{{tickets}}',
+      prompt_system: '你是优先级排序系统。综合考虑影响范围、客户级别、问题严重性。',
+      input_fields: '["tickets"]', output_fields: '["priority_ranking"]',
+      output_format: 'json', retry_count: 0, timeout_ms: 20000,
     },
   ];
 
@@ -426,11 +596,11 @@ export function seed() {
     INSERT INTO ai_results (id, task_id, task_name, action, page_id, record_id, field_name,
       trigger_source, trigger_user, trigger_user_id, trigger_ip, trigger_action, trigger_page_path, trigger_block_pos,
       input_data, prompt_used,
-      old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response)
+      old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response, collaboration_id)
     VALUES (@id, @task_id, @task_name, @action, 'tickets', @record_id, @field_name,
       @trigger_source, @trigger_user, @trigger_user_id, @trigger_ip, @trigger_action, @trigger_page_path, @trigger_block_pos,
       @input_data, @prompt_used,
-      @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response)
+      @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response, @collaboration_id)
   `);
 
   // tk-001: English printer issue — full AI team result
@@ -541,16 +711,76 @@ export function seed() {
 
   for (const r of [...tk1Results, ...tk2Results, ...tk3Results, ...tk4Results, ...tk5Results, ...tk6Results, ...tk7Results, ...tk8Results]) insertResult.run(enrichResult(r, 'tickets', 'workflow', `工单列表/${r.field_name}`));
 
+  // ---- Collaboration group results ----
+  // tk-001: 协作组 — 语言检测 + 分类 + 优先级 作为一组整体处理
+  const collab1Id = `collab-${uid()}`;
+  const tk1Collab = [
+    { id: `res-${uid()}`, task_id: 'task-translate-detect', task_name: '翻译专员', action: 'classify', record_id: 'tk-001', field_name: 'language_detect', old_value: '', new_value: '英语 (English)', confidence: 99, model: 'gemini-2.0-flash', tokens_used: 18, duration_ms: 180, status: 'pending', raw_response: '', collaboration_id: collab1Id },
+    { id: `res-${uid()}`, task_id: 'task-classify', task_name: '分类专员', action: 'classify', record_id: 'tk-001', field_name: 'auto_category', old_value: '', new_value: '设备维修', confidence: 96, model: 'gemini-2.0-flash', tokens_used: 28, duration_ms: 310, status: 'pending', raw_response: '', collaboration_id: collab1Id },
+    { id: `res-${uid()}`, task_id: 'task-priority', task_name: '优先级顾问', action: 'decide', record_id: 'tk-001', field_name: 'auto_priority', old_value: '', new_value: 'P1-紧急', confidence: 92, model: 'gemini-2.0-flash', tokens_used: 35, duration_ms: 290, status: 'pending', raw_response: '', collaboration_id: collab1Id },
+  ];
+  // tk-003: 协作组 — 语言检测 + 分类 + 优先级 + 情绪分析
+  const collab2Id = `collab-${uid()}`;
+  const tk3Collab = [
+    { id: `res-${uid()}`, task_id: 'task-translate-detect', task_name: '翻译专员', action: 'classify', record_id: 'tk-003', field_name: 'language_detect', old_value: '', new_value: '英语 (English)', confidence: 99, model: 'gemini-2.0-flash', tokens_used: 18, duration_ms: 190, status: 'pending', raw_response: '', collaboration_id: collab2Id },
+    { id: `res-${uid()}`, task_id: 'task-classify', task_name: '分类专员', action: 'classify', record_id: 'tk-003', field_name: 'auto_category', old_value: '', new_value: '数据问题', confidence: 94, model: 'gemini-2.0-flash', tokens_used: 32, duration_ms: 320, status: 'pending', raw_response: '', collaboration_id: collab2Id },
+    { id: `res-${uid()}`, task_id: 'task-priority', task_name: '优先级顾问', action: 'decide', record_id: 'tk-003', field_name: 'auto_priority', old_value: '', new_value: 'P2-高', confidence: 91, model: 'gemini-2.0-flash', tokens_used: 33, duration_ms: 300, status: 'pending', raw_response: '', collaboration_id: collab2Id },
+    { id: `res-${uid()}`, task_id: 'task-classify-sentiment', task_name: '分类专员', action: 'classify', record_id: 'tk-003', field_name: 'sentiment', old_value: '', new_value: '负面', confidence: 88, model: 'gemini-2.0-flash', tokens_used: 22, duration_ms: 250, status: 'pending', raw_response: '', collaboration_id: collab2Id },
+  ];
+  for (const r of [...tk1Collab, ...tk3Collab]) insertResult.run(enrichResult(r, 'tickets', 'workflow', `工单列表/协作分析`));
+
+  // ---- Historical results (older timestamps) ----
+  // These simulate past AI processing on the same fields, so the history tab has data
+  const insertHistResult = db.prepare(`
+    INSERT INTO ai_results (id, task_id, task_name, action, page_id, record_id, field_name,
+      trigger_source, trigger_user, trigger_user_id, trigger_ip, trigger_action, trigger_page_path, trigger_block_pos,
+      input_data, prompt_used,
+      old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response, collaboration_id, created_at)
+    VALUES (@id, @task_id, @task_name, @action, @page_id, @record_id, @field_name,
+      @trigger_source, @trigger_user, @trigger_user_id, @trigger_ip, @trigger_action, @trigger_page_path, @trigger_block_pos,
+      @input_data, @prompt_used,
+      @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response, @collaboration_id, @created_at)
+  `);
+
+  // tk-001 category — was classified differently before, then corrected
+  const histRecords = [
+    { id: `res-hist-${uid()}`, task_id: 'task-classify', task_name: '分类专员', action: 'classify', page_id: 'tickets', record_id: 'tk-001', field_name: 'category', old_value: '', new_value: '软件问题', confidence: 78, model: 'qwen-max', tokens_used: 26, duration_ms: 450, status: 'rejected', raw_response: '', collaboration_id: '', created_at: '2026-03-07 10:15:00' },
+    { id: `res-hist-${uid()}`, task_id: 'task-priority', task_name: '优先级顾问', action: 'decide', page_id: 'tickets', record_id: 'tk-001', field_name: 'priority', old_value: '', new_value: 'P2-高', confidence: 82, model: 'qwen-max', tokens_used: 30, duration_ms: 380, status: 'rejected', raw_response: '', collaboration_id: '', created_at: '2026-03-07 10:15:02' },
+    { id: `res-hist-${uid()}`, task_id: 'task-translate', task_name: '翻译专员', action: 'translate', page_id: 'tickets', record_id: 'tk-001', field_name: 'translated_content', old_value: '', new_value: '最新系统更新后，我们的打印机无法连接。已尝试重启和重装驱动。', confidence: 85, model: 'qwen-max', tokens_used: 120, duration_ms: 950, status: 'modified', raw_response: '', collaboration_id: '', created_at: '2026-03-07 10:14:30' },
+    // tk-002 — older classification attempt
+    { id: `res-hist-${uid()}`, task_id: 'task-classify', task_name: '分类专员', action: 'classify', page_id: 'tickets', record_id: 'tk-002', field_name: 'category', old_value: '', new_value: '功能咨询', confidence: 72, model: 'qwen-max', tokens_used: 24, duration_ms: 400, status: 'rejected', raw_response: '', collaboration_id: '', created_at: '2026-03-06 14:30:00' },
+    { id: `res-hist-${uid()}`, task_id: 'task-translate', task_name: '翻译专员', action: 'translate', page_id: 'tickets', record_id: 'tk-002', field_name: 'language', old_value: '', new_value: '日语', confidence: 97, model: 'qwen-max', tokens_used: 35, duration_ms: 300, status: 'applied', raw_response: '', collaboration_id: '', created_at: '2026-03-06 14:29:50' },
+    // tk-003 — collaboration history (an older collab group that was accepted)
+    { id: `res-hist-${uid()}`, task_id: 'task-classify', task_name: '分类专员', action: 'classify', page_id: 'tickets', record_id: 'tk-003', field_name: 'auto_category', old_value: '', new_value: '功能咨询', confidence: 68, model: 'qwen-max', tokens_used: 28, duration_ms: 420, status: 'rejected', raw_response: '', collaboration_id: `collab-hist-${uid()}`, created_at: '2026-03-07 09:00:00' },
+    { id: `res-hist-${uid()}`, task_id: 'task-priority', task_name: '优先级顾问', action: 'decide', page_id: 'tickets', record_id: 'tk-003', field_name: 'auto_priority', old_value: '', new_value: 'P3-中', confidence: 70, model: 'qwen-max', tokens_used: 30, duration_ms: 350, status: 'rejected', raw_response: '', collaboration_id: `collab-hist-${uid()}`, created_at: '2026-03-07 09:00:02' },
+    // Customer history
+    { id: `res-hist-${uid()}`, task_id: 'task-customer-bg', task_name: '🔍 情报分析师', action: 'investigate', page_id: 'customers', record_id: 'cust-001', field_name: 'background', old_value: '', new_value: 'TechFlow GmbH — 德国制造业软件公司（初始调查，数据不完整）', confidence: 72, model: 'qwen-max', tokens_used: 180, duration_ms: 1500, status: 'modified', raw_response: '', collaboration_id: '', created_at: '2026-03-05 16:00:00' },
+    { id: `res-hist-${uid()}`, task_id: 'task-satisfaction', task_name: '😊 客户成功顾问', action: 'decide', page_id: 'customers', record_id: 'cust-001', field_name: 'satisfaction_insight', old_value: '', new_value: '客户活跃度一般，需持续关注。', confidence: 75, model: 'qwen-max', tokens_used: 80, duration_ms: 600, status: 'applied', raw_response: '', collaboration_id: '', created_at: '2026-03-05 16:01:00' },
+    // Order history
+    { id: `res-hist-${uid()}`, task_id: 'task-voucher', task_name: '💰 财务核对员', action: 'validate', page_id: 'orders', record_id: 'ord-005', field_name: 'voucher_analysis', old_value: '', new_value: '{"match":false,"confidence":55,"voucher_amount":"EUR 14,800","discrepancies":["金额不匹配"],"recommendation":"需人工复核"}', confidence: 55, model: 'qwen-max', tokens_used: 160, duration_ms: 1200, status: 'rejected', raw_response: '', collaboration_id: '', created_at: '2026-03-06 11:00:00' },
+  ];
+
+  for (const r of histRecords) {
+    const enriched = enrichResult(r, r.page_id as string, 'workflow', `历史/${r.field_name}`);
+    insertHistResult.run({ ...enriched, created_at: r.created_at, page_id: r.page_id });
+  }
+
+  // Audit logs for historical results
+  const insertAuditHist = db.prepare('INSERT INTO audit_log (id, result_id, action, user_name, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+  for (const r of histRecords) {
+    insertAuditHist.run(`aud-hist-${uid()}`, r.id, r.status, r.status === 'applied' ? 'system' : '张明', `历史操作: ${r.status}`, r.created_at);
+  }
+
   // ---- Customer AI Results (page_id = 'customers') ----
   const insertCustResult = db.prepare(`
     INSERT INTO ai_results (id, task_id, task_name, action, page_id, record_id, field_name,
       trigger_source, trigger_user, trigger_user_id, trigger_ip, trigger_action, trigger_page_path, trigger_block_pos,
       input_data, prompt_used,
-      old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response)
+      old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response, collaboration_id)
     VALUES (@id, @task_id, @task_name, @action, 'customers', @record_id, @field_name,
       @trigger_source, @trigger_user, @trigger_user_id, @trigger_ip, @trigger_action, @trigger_page_path, @trigger_block_pos,
       @input_data, @prompt_used,
-      @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response)
+      @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response, @collaboration_id)
   `);
 
   // cust-001 TechFlow GmbH
@@ -584,11 +814,11 @@ export function seed() {
     INSERT INTO ai_results (id, task_id, task_name, action, page_id, record_id, field_name,
       trigger_source, trigger_user, trigger_user_id, trigger_ip, trigger_action, trigger_page_path, trigger_block_pos,
       input_data, prompt_used,
-      old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response)
+      old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response, collaboration_id)
     VALUES (@id, @task_id, @task_name, @action, 'orders', @record_id, @field_name,
       @trigger_source, @trigger_user, @trigger_user_id, @trigger_ip, @trigger_action, @trigger_page_path, @trigger_block_pos,
       @input_data, @prompt_used,
-      @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response)
+      @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response, @collaboration_id)
   `);
 
   // ord-003 already analyzed
@@ -607,11 +837,11 @@ export function seed() {
     INSERT INTO ai_results (id, task_id, task_name, action, page_id, record_id, field_name,
       trigger_source, trigger_user, trigger_user_id, trigger_ip, trigger_action, trigger_page_path, trigger_block_pos,
       input_data, prompt_used,
-      old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response)
+      old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response, collaboration_id)
     VALUES (@id, @task_id, @task_name, @action, 'emails', @record_id, @field_name,
       @trigger_source, @trigger_user, @trigger_user_id, @trigger_ip, @trigger_action, @trigger_page_path, @trigger_block_pos,
       @input_data, @prompt_used,
-      @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response)
+      @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response, @collaboration_id)
   `);
 
   const emailTransResults = [
@@ -630,11 +860,11 @@ export function seed() {
     INSERT INTO ai_results (id, task_id, task_name, action, page_id, record_id, field_name,
       trigger_source, trigger_user, trigger_user_id, trigger_ip, trigger_action, trigger_page_path, trigger_block_pos,
       input_data, prompt_used,
-      old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response)
+      old_value, new_value, confidence, model, tokens_used, duration_ms, status, raw_response, collaboration_id)
     VALUES (@id, @task_id, @task_name, @action, 'email-summaries', @record_id, @field_name,
       @trigger_source, @trigger_user, @trigger_user_id, @trigger_ip, @trigger_action, @trigger_page_path, @trigger_block_pos,
       @input_data, @prompt_used,
-      @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response)
+      @old_value, @new_value, @confidence, @model, @tokens_used, @duration_ms, @status, @raw_response, @collaboration_id)
   `);
 
   const sumResults = [

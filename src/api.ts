@@ -31,6 +31,8 @@ export const getResults = (params?: Record<string, string>) => {
 };
 export const updateResultStatus = (id: string, status: string, user = 'user') =>
   request('/results/' + id + '/status', { method: 'PATCH', body: JSON.stringify({ status, user }) });
+export const batchUpdateStatus = (ids: string[], status: string, user = 'user') =>
+  request('/results/batch/status', { method: 'PATCH', body: JSON.stringify({ ids, status, user }) });
 
 // Audit
 export const getAuditLogs = (resultId?: string) => {
@@ -164,6 +166,7 @@ export interface AIResultRow {
   model: string; tokens_used: number; duration_ms: number;
   raw_response: string; status: string;
   applied_by: string; applied_at: string;
+  collaboration_id: string;
   retry_of: string; conversation_id: string;
   created_at: string;
 }

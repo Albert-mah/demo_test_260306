@@ -93,7 +93,7 @@ app.delete('/api/tasks/:id', (c) => {
 // ============================================================
 
 app.get('/api/results', (c) => {
-  const { page_id, record_id, field_name, status, task_id } = c.req.query();
+  const { page_id, record_id, field_name, status, task_id, collaboration_id } = c.req.query();
   let sql = 'SELECT * FROM ai_results WHERE 1=1';
   const params: unknown[] = [];
   if (page_id) { sql += ' AND page_id = ?'; params.push(page_id); }
@@ -101,6 +101,7 @@ app.get('/api/results', (c) => {
   if (field_name) { sql += ' AND field_name = ?'; params.push(field_name); }
   if (status) { sql += ' AND status = ?'; params.push(status); }
   if (task_id) { sql += ' AND task_id = ?'; params.push(task_id); }
+  if (collaboration_id) { sql += ' AND collaboration_id = ?'; params.push(collaboration_id); }
   sql += ' ORDER BY created_at DESC LIMIT 200';
   return c.json(db.prepare(sql).all(...params));
 });
@@ -114,6 +115,22 @@ app.patch('/api/results/:id/status', async (c) => {
   db.prepare('INSERT INTO audit_log (id, result_id, action, user_name, detail, note) VALUES (?, ?, ?, ?, ?, ?)')
     .run(`aud-${uid()}`, id, status, user || 'user', `Status → ${status}`, note || '');
   return c.json({ ok: true });
+});
+
+// Batch status update — for collaboration groups
+app.patch('/api/results/batch/status', async (c) => {
+  const { ids, status, user, note } = await c.req.json() as { ids: string[]; status: string; user?: string; note?: string };
+  const userName = user || 'user';
+  const updateStmt = db.prepare('UPDATE ai_results SET status = ?, applied_by = ?, applied_at = datetime("now") WHERE id = ?');
+  const auditStmt = db.prepare('INSERT INTO audit_log (id, result_id, action, user_name, detail, note) VALUES (?, ?, ?, ?, ?, ?)');
+  const tx = db.transaction(() => {
+    for (const id of ids) {
+      updateStmt.run(status, userName, id);
+      auditStmt.run(`aud-${uid()}`, id, status, userName, `协作组整体 → ${status}`, note || '');
+    }
+  });
+  tx();
+  return c.json({ ok: true, count: ids.length });
 });
 
 // ============================================================
