@@ -18,7 +18,7 @@ import {
   MessageOutlined, CopyOutlined, InfoCircleOutlined,
   EyeOutlined, AimOutlined, DesktopOutlined, CloudOutlined,
   ClockCircleOutlined, ApiOutlined, FileTextOutlined,
-  LinkOutlined, UserOutlined, SendOutlined,
+  LinkOutlined, UserOutlined, SendOutlined, TeamOutlined,
 } from '@ant-design/icons';
 import {
   updateResultStatus, retryResult, getResultContext, addAuditNote,
@@ -174,99 +174,178 @@ export function AIResultPopover({
   const isForm = mode === 'form' || results.length > 2;
   const popoverWidth = isForm ? 420 : 360;
 
-  const content = (
-    <div style={{ width: popoverWidth, fontSize: 12, maxHeight: 520, overflow: 'auto' }}>
-      {/* Results list */}
-      {results.map((r, idx) => {
-        const task = resolveTask(r.task_id);
-        const statusInfo = STATUS_MAP[r.status] || STATUS_MAP.pending;
-        const isEditing = editingId === r.id;
-        const isLongValue = (r.new_value?.length || 0) > 100;
+  // Group results by employee for collaboration detection
+  const resultsByEmp = new Map<string, { avatar: string; color: string; name: string; items: AIResultRow[] }>();
+  for (const r of results) {
+    const task = resolveTask(r.task_id);
+    const key = task?.name || r.task_name;
+    if (!resultsByEmp.has(key)) {
+      resultsByEmp.set(key, {
+        avatar: task?.avatar || '\u{1F916}', color: task?.avatar_color || '#8b5cf6',
+        name: key, items: [],
+      });
+    }
+    resultsByEmp.get(key)!.items.push(r);
+  }
+  const isCollab = resultsByEmp.size > 1;
+  const empEntries = Array.from(resultsByEmp.entries());
 
-        return (
-          <div key={r.id} style={{
-            padding: '8px 0',
-            borderBottom: idx < results.length - 1 ? '1px solid #f0f0f0' : 'none',
-          }}>
-            {/* Header: avatar + name + field + status */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-              {task && <AIAvatar avatar={task.avatar} color={task.avatar_color} size={22} />}
-              <div style={{ flex: 1 }}>
-                <span style={{ fontWeight: 600 }}>{r.task_name}</span>
-                {r.field_name && (
-                  <span style={{ color: '#999', marginLeft: 4, fontSize: 11 }}>→ {r.field_name}</span>
-                )}
-              </div>
-              <Tag color={statusInfo.color} style={{ fontSize: 10, margin: 0 }}>{statusInfo.label}</Tag>
-            </div>
+  const renderResultRow = (r: AIResultRow, empColor: string, showEmpBadge: boolean) => {
+    const task = resolveTask(r.task_id);
+    const statusInfo = STATUS_MAP[r.status] || STATUS_MAP.pending;
+    const isEditing = editingId === r.id;
+    const isLongValue = (r.new_value?.length || 0) > 100;
 
-            {/* Result value — editable */}
-            {isEditing ? (
-              <div style={{ marginBottom: 6 }}>
-                <Input.TextArea
-                  value={editValue}
-                  onChange={e => setEditValue(e.target.value)}
-                  rows={isLongValue ? 5 : 2}
-                  style={{ fontSize: 12, marginBottom: 4 }}
-                  autoFocus
-                />
-                <Space size={4}>
-                  <Button size="small" type="primary" onClick={() => handleSaveEdit(r.id)}
-                    style={{ background: '#8b5cf6', borderColor: '#8b5cf6', fontSize: 11 }}>
-                    修改后采纳
-                  </Button>
-                  <Button size="small" onClick={() => setEditingId(null)} style={{ fontSize: 11 }}>取消</Button>
-                </Space>
-              </div>
-            ) : (
-              <div style={{
-                color: '#444', whiteSpace: 'pre-wrap', marginBottom: 6,
-                background: '#faf8ff', borderLeft: '2px solid #d8b4fe',
-                padding: '4px 8px', borderRadius: '0 4px 4px 0',
-                maxHeight: isForm ? 120 : 80, overflow: 'auto', lineHeight: 1.5,
-              }}>
-                {r.new_value}
-              </div>
+    return (
+      <div key={r.id} style={{
+        padding: '8px 6px',
+        borderLeft: isCollab ? `3px solid ${empColor}` : undefined,
+        background: isCollab ? `${empColor}06` : undefined,
+      }}>
+        {/* Header: avatar + name + field + status */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+          {task && <AIAvatar avatar={task.avatar} color={task.avatar_color} size={20} />}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {showEmpBadge && (
+              <span style={{ fontSize: 10, color: empColor, fontWeight: 600, marginRight: 4 }}>{task?.name || r.task_name}</span>
             )}
-
-            {/* Metadata */}
-            <div style={{ color: '#bbb', marginBottom: 4, display: 'flex', gap: 8, fontSize: 11 }}>
-              <span>{r.model}</span>
-              <span>{r.confidence}%</span>
-              <span>{r.tokens_used}t</span>
-              <span>{r.duration_ms}ms</span>
-            </div>
-
-            {/* Action bar */}
-            {!isEditing && (
-              <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                {r.status === 'pending' && (
-                  <>
-                    <Button size="small" type="text" icon={<CheckOutlined />}
-                      style={{ color: '#52c41a', fontSize: 11 }}
-                      onClick={() => handleStatus(r.id, 'applied')}>采纳</Button>
-                    <Button size="small" type="text" danger icon={<CloseOutlined />}
-                      style={{ fontSize: 11 }}
-                      onClick={() => handleStatus(r.id, 'rejected')}>拒绝</Button>
-                    <Button size="small" type="text" icon={<EditOutlined />}
-                      style={{ fontSize: 11 }}
-                      onClick={() => handleStartEdit(r)}>编辑</Button>
-                  </>
-                )}
-                <Button size="small" type="text" icon={<RedoOutlined />}
-                  style={{ fontSize: 11, color: '#8b5cf6' }}
-                  onClick={() => handleRetry(r.id)}>重跑</Button>
-                <Button size="small" type="text" icon={<CopyOutlined />}
-                  style={{ fontSize: 11 }}
-                  onClick={() => handleCopy(r.new_value)} />
-                <Button size="small" type="text" icon={<EyeOutlined />}
-                  style={{ fontSize: 11, color: '#8b5cf6' }}
-                  onClick={() => openDetail(r.id)}>详情</Button>
-              </div>
+            <span style={{ fontWeight: 600, fontSize: 12 }}>{r.task_name}</span>
+            {r.field_name && (
+              <span style={{ color: '#999', marginLeft: 4, fontSize: 11 }}>{'\u2192'} {r.field_name}</span>
             )}
           </div>
-        );
-      })}
+          <Tag color={statusInfo.color} style={{ fontSize: 10, margin: 0 }}>{statusInfo.label}</Tag>
+        </div>
+
+        {/* Result value */}
+        {isEditing ? (
+          <div style={{ marginBottom: 6 }}>
+            <Input.TextArea
+              value={editValue}
+              onChange={e => setEditValue(e.target.value)}
+              rows={isLongValue ? 5 : 2}
+              style={{ fontSize: 12, marginBottom: 4 }}
+              autoFocus
+            />
+            <Space size={4}>
+              <Button size="small" type="primary" onClick={() => handleSaveEdit(r.id)}
+                style={{ background: '#8b5cf6', borderColor: '#8b5cf6', fontSize: 11 }}>
+                修改后采纳
+              </Button>
+              <Button size="small" onClick={() => setEditingId(null)} style={{ fontSize: 11 }}>取消</Button>
+            </Space>
+          </div>
+        ) : (
+          <div style={{
+            color: '#444', whiteSpace: 'pre-wrap', marginBottom: 6,
+            background: isCollab ? '#fff' : '#faf8ff',
+            borderLeft: `2px solid ${empColor}80`,
+            padding: '4px 8px', borderRadius: '0 4px 4px 0',
+            maxHeight: isForm ? 120 : 80, overflow: 'auto', lineHeight: 1.5,
+          }}>
+            {r.new_value}
+          </div>
+        )}
+
+        {/* Metadata */}
+        <div style={{ color: '#bbb', marginBottom: 4, display: 'flex', gap: 8, fontSize: 11 }}>
+          <span>{r.model}</span>
+          <span>{r.confidence}%</span>
+          <span>{r.tokens_used}t</span>
+          <span>{r.duration_ms}ms</span>
+        </div>
+
+        {/* Action bar */}
+        {!isEditing && (
+          <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            {r.status === 'pending' && (
+              <>
+                <Button size="small" type="text" icon={<CheckOutlined />}
+                  style={{ color: '#52c41a', fontSize: 11 }}
+                  onClick={() => handleStatus(r.id, 'applied')}>采纳</Button>
+                <Button size="small" type="text" danger icon={<CloseOutlined />}
+                  style={{ fontSize: 11 }}
+                  onClick={() => handleStatus(r.id, 'rejected')}>拒绝</Button>
+                <Button size="small" type="text" icon={<EditOutlined />}
+                  style={{ fontSize: 11 }}
+                  onClick={() => handleStartEdit(r)}>编辑</Button>
+              </>
+            )}
+            <Button size="small" type="text" icon={<RedoOutlined />}
+              style={{ fontSize: 11, color: '#8b5cf6' }}
+              onClick={() => handleRetry(r.id)}>重跑</Button>
+            <Button size="small" type="text" icon={<CopyOutlined />}
+              style={{ fontSize: 11 }}
+              onClick={() => handleCopy(r.new_value)} />
+            <Button size="small" type="text" icon={<EyeOutlined />}
+              style={{ fontSize: 11, color: '#8b5cf6' }}
+              onClick={() => openDetail(r.id)}>详情</Button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const content = (
+    <div style={{ width: popoverWidth, fontSize: 12, maxHeight: 520, overflow: 'auto' }}>
+      {/* Collaboration banner */}
+      {isCollab && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '6px 8px', marginBottom: 4,
+          background: 'linear-gradient(90deg, #f3eeff 0%, #eef4ff 50%, #f0fff4 100%)',
+          borderRadius: 4,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+            {empEntries.map(([name, emp], i) => (
+              <div key={name} style={{
+                marginLeft: i > 0 ? -6 : 0, zIndex: empEntries.length - i,
+                position: 'relative', borderRadius: '50%', border: '2px solid #fff',
+                display: 'inline-flex',
+              }}>
+                <AIAvatar avatar={emp.avatar} color={emp.color} size={20} />
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, flex: 1, minWidth: 0 }}>
+            <TeamOutlined style={{ color: '#8b5cf6', marginRight: 3 }} />
+            <span style={{ fontWeight: 600 }}>协作处理</span>
+            <span style={{ color: '#999', marginLeft: 4 }}>
+              {empEntries.map(([name, emp], i) => (
+                <span key={name}>
+                  {i > 0 && ' / '}
+                  <span style={{ color: emp.color, fontWeight: 500 }}>{name}</span>
+                </span>
+              ))}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Results list */}
+      {isCollab ? (
+        empEntries.map(([empName, emp]) =>
+          emp.items.map((r, i) => (
+            <div key={r.id} style={{
+              borderBottom: '1px solid #f0f0f0',
+            }}>
+              {renderResultRow(r, emp.color, true)}
+            </div>
+          ))
+        )
+      ) : (
+        results.map((r, idx) => {
+          const task = resolveTask(r.task_id);
+          const empColor = task?.avatar_color || '#8b5cf6';
+          return (
+            <div key={r.id} style={{
+              borderBottom: idx < results.length - 1 ? '1px solid #f0f0f0' : 'none',
+            }}>
+              {renderResultRow(r, empColor, false)}
+            </div>
+          );
+        })
+      )}
 
       <Divider style={{ margin: '6px 0' }} />
 
