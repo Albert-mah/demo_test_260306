@@ -238,13 +238,13 @@ export default function WorkflowEditor({ onBack }: { onBack: () => void }) {
                         </div>
                       )}
 
-                      {node.type === 'action' && node.config.type && (
+                      {node.type === 'action' && !!node.config.type && (
                         <div style={{ fontSize: 11, color: '#1677ff' }}>
                           {String(node.config.type)} → {String(node.config.collection || '')}
                         </div>
                       )}
 
-                      {node.type === 'notification' && node.config.template && (
+                      {node.type === 'notification' && !!node.config.template && (
                         <div style={{ fontSize: 11, color: '#52c41a' }}>
                           {String(node.config.template).slice(0, 40)}
                         </div>

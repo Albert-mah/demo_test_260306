@@ -262,7 +262,7 @@ export function AITaskSelector({
             onChange={addTask}
             options={groupedOptions}
             filterOption={(input, option) => {
-              const t = tasks.find(tk => tk.id === option?.value);
+              const t = tasks.find(tk => tk.id === (option as { value?: string })?.value);
               if (!t) return false;
               const lc = input.toLowerCase();
               return t.name.toLowerCase().includes(lc) || t.description.toLowerCase().includes(lc) || t.action.toLowerCase().includes(lc);

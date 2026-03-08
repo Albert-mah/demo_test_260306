@@ -86,7 +86,7 @@ export default function App() {
       case 'templates':
         return <BlockTemplateManager />;
       default:
-        return <div style={{ padding: 40, color: '#999' }}>"{page.key}" 页面开发中...</div>;
+        return <div style={{ padding: 40, color: '#999' }}>"{(page as { key: string }).key}" 页面开发中...</div>;
     }
   };
 
