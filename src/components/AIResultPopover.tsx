@@ -8,10 +8,10 @@
  * - Expand conversation with full context
  * - Full context panel (collapsible)
  */
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Popover, Button, Space, Tag, Input, message, Divider,
-  Drawer, Descriptions, Timeline, Card, Empty,
+  Drawer, Descriptions, Timeline, Card, Empty, Tabs, Spin,
 } from 'antd';
 import {
   CheckOutlined, CloseOutlined, RedoOutlined, EditOutlined,
@@ -19,9 +19,11 @@ import {
   EyeOutlined, AimOutlined, DesktopOutlined, CloudOutlined,
   ClockCircleOutlined, ApiOutlined, FileTextOutlined,
   LinkOutlined, UserOutlined, SendOutlined, TeamOutlined,
+  HistoryOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import {
   updateResultStatus, retryResult, getResultContext, addAuditNote,
+  getResults as fetchResults,
   type AIResultRow, type AITask, type ResultContext,
 } from '../api';
 import { AIAvatar, AIFusedAvatar } from './AIAvatar';
@@ -85,12 +87,38 @@ export function AIResultPopover({
   const [editValue, setEditValue] = useState('');
   const [showContext, setShowContext] = useState(false);
 
+  // Tab & history state
+  const [activeTab, setActiveTab] = useState('current');
+  const [history, setHistory] = useState<AIResultRow[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [popoverOpen, setPopoverOpen] = useState(false);
+
   // Detail drawer state
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailCtx, setDetailCtx] = useState<ResultContext | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [noteInput, setNoteInput] = useState('');
   const [addingNote, setAddingNote] = useState(false);
+
+  // Load history for this field/record when history tab is activated
+  const loadHistory = useCallback(async () => {
+    const ref = results[0];
+    if (!ref) return;
+    setHistoryLoading(true);
+    const params: Record<string, string> = {};
+    if (ref.record_id) params.record_id = ref.record_id;
+    if (ref.field_name) params.field_name = ref.field_name;
+    if (ref.page_id) params.page_id = ref.page_id;
+    const all = await fetchResults(params);
+    // Exclude current results to avoid duplication
+    const currentIds = new Set(results.map(r => r.id));
+    setHistory(all.filter(r => !currentIds.has(r.id)));
+    setHistoryLoading(false);
+  }, [results]);
+
+  useEffect(() => {
+    if (activeTab === 'history' && popoverOpen) loadHistory();
+  }, [activeTab, popoverOpen, loadHistory]);
 
   const resolveTask = (taskId: string) => tasks.find(t => t.id === taskId);
 
@@ -286,8 +314,72 @@ export function AIResultPopover({
     );
   };
 
-  const content = (
-    <div style={{ width: popoverWidth, fontSize: 12, maxHeight: 520, overflow: 'auto' }}>
+  // ── Render history tab content ──
+  const renderHistoryRow = (r: AIResultRow) => {
+    const task = resolveTask(r.task_id);
+    const empColor = task?.avatar_color || '#8b5cf6';
+    const statusInfo = STATUS_MAP[r.status] || STATUS_MAP.pending;
+    const src = TRIGGER_SOURCE_CONFIG[r.trigger_source] || TRIGGER_SOURCE_CONFIG.backend;
+    return (
+      <div key={r.id} style={{
+        padding: '6px 4px', borderBottom: '1px solid #f5f5f5',
+        borderLeft: `3px solid ${empColor}`, background: `${empColor}06`,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+          {task && <AIAvatar avatar={task.avatar} color={empColor} size={18} />}
+          <span style={{ fontSize: 11, fontWeight: 600, color: empColor }}>{task?.name || r.task_name}</span>
+          <Tag color={ACTION_LABELS[r.action] ? 'purple' : 'default'}
+            style={{ fontSize: 9, lineHeight: '14px', margin: 0 }}>
+            {ACTION_LABELS[r.action] || r.action}
+          </Tag>
+          <Tag color={statusInfo.color} style={{ fontSize: 9, lineHeight: '14px', margin: 0 }}>
+            {statusInfo.label}
+          </Tag>
+          <span style={{ flex: 1 }} />
+          <Tag icon={src.icon} color={src.color} style={{ fontSize: 9, lineHeight: '14px', margin: 0 }}>
+            {src.label}
+          </Tag>
+        </div>
+        <div style={{
+          fontSize: 11, color: '#555', whiteSpace: 'pre-wrap',
+          borderLeft: `2px solid ${empColor}60`, padding: '3px 6px',
+          background: '#fff', borderRadius: '0 3px 3px 0',
+          maxHeight: 48, overflow: 'hidden', lineHeight: 1.4,
+        }}>
+          {r.new_value?.slice(0, 120)}{(r.new_value?.length || 0) > 120 ? '...' : ''}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3, fontSize: 10, color: '#bbb' }}>
+          <span>{r.model}</span>
+          <span>{r.confidence}%</span>
+          <span>{r.tokens_used}t</span>
+          <span>{r.duration_ms}ms</span>
+          <span style={{ flex: 1 }} />
+          <span>{r.created_at?.slice(0, 16)}</span>
+          <Button size="small" type="text" icon={<EyeOutlined />}
+            style={{ fontSize: 10, color: '#8b5cf6', padding: '0 2px', height: 16 }}
+            onClick={() => openDetail(r.id)} />
+        </div>
+      </div>
+    );
+  };
+
+  // Group history by employee for collaboration display
+  const historyByEmp = new Map<string, { avatar: string; color: string; name: string; items: AIResultRow[] }>();
+  for (const r of history) {
+    const task = resolveTask(r.task_id);
+    const key = task?.name || r.task_name;
+    if (!historyByEmp.has(key)) {
+      historyByEmp.set(key, {
+        avatar: task?.avatar || '\u{1F916}', color: task?.avatar_color || '#8b5cf6',
+        name: key, items: [],
+      });
+    }
+    historyByEmp.get(key)!.items.push(r);
+  }
+  const historyEmpEntries = Array.from(historyByEmp.entries());
+
+  const currentTabContent = (
+    <div>
       {/* Collaboration banner */}
       {isCollab && (
         <div style={{
@@ -325,10 +417,8 @@ export function AIResultPopover({
       {/* Results list */}
       {isCollab ? (
         empEntries.map(([empName, emp]) =>
-          emp.items.map((r, i) => (
-            <div key={r.id} style={{
-              borderBottom: '1px solid #f0f0f0',
-            }}>
+          emp.items.map((r) => (
+            <div key={r.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
               {renderResultRow(r, emp.color, true)}
             </div>
           ))
@@ -349,7 +439,7 @@ export function AIResultPopover({
 
       <Divider style={{ margin: '6px 0' }} />
 
-      {/* Context panel — collapsible */}
+      {/* Context panel */}
       {context && (
         <div style={{ marginBottom: 6 }}>
           <Button size="small" type="text" icon={<InfoCircleOutlined />}
@@ -370,13 +460,75 @@ export function AIResultPopover({
         </div>
       )}
 
-      {/* Chat trigger — opens floating AIChatModal */}
+      {/* Chat trigger */}
       <Button size="small" type="text" icon={<MessageOutlined />}
         style={{ color: '#8b5cf6', fontSize: 11, padding: '2px 4px' }}
         onClick={() => setChatOpen(true)}>
         对话微调
         {context && <span style={{ color: '#bbb' }}> (含上下文)</span>}
       </Button>
+    </div>
+  );
+
+  const historyTabContent = (
+    <div>
+      {historyLoading ? (
+        <div style={{ textAlign: 'center', padding: 24 }}><Spin size="small" /></div>
+      ) : history.length === 0 ? (
+        <Empty description="暂无历史记录" image={Empty.PRESENTED_IMAGE_SIMPLE}
+          style={{ padding: '16px 0' }} />
+      ) : (
+        <>
+          {/* History collaboration banner when multiple employees */}
+          {historyEmpEntries.length > 1 && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '4px 6px', marginBottom: 4,
+              background: 'linear-gradient(90deg, #fff7e6 0%, #f3eeff 50%, #eef4ff 100%)',
+              borderRadius: 4, fontSize: 10,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                {historyEmpEntries.map(([name, emp], i) => (
+                  <div key={name} style={{
+                    marginLeft: i > 0 ? -5 : 0, zIndex: historyEmpEntries.length - i,
+                    position: 'relative', borderRadius: '50%', border: '1.5px solid #fff',
+                    display: 'inline-flex',
+                  }}>
+                    <AIAvatar avatar={emp.avatar} color={emp.color} size={16} />
+                  </div>
+                ))}
+              </div>
+              <span style={{ color: '#999' }}>
+                {historyEmpEntries.length} 个 AI 员工共处理过 {history.length} 次
+              </span>
+            </div>
+          )}
+          {history.map(r => renderHistoryRow(r))}
+        </>
+      )}
+    </div>
+  );
+
+  const content = (
+    <div style={{ width: popoverWidth, fontSize: 12, maxHeight: 520, overflow: 'auto' }}>
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        size="small"
+        style={{ marginTop: -8 }}
+        items={[
+          {
+            key: 'current',
+            label: <span><ThunderboltOutlined /> 本次结果 ({results.length})</span>,
+            children: currentTabContent,
+          },
+          {
+            key: 'history',
+            label: <span><HistoryOutlined /> 历史记录{history.length > 0 ? ` (${history.length})` : ''}</span>,
+            children: historyTabContent,
+          },
+        ]}
+      />
     </div>
   );
 
@@ -408,6 +560,11 @@ export function AIResultPopover({
         trigger="click"
         placement={placement}
         overlayStyle={{ maxWidth: popoverWidth + 40 }}
+        open={popoverOpen}
+        onOpenChange={(v) => {
+          setPopoverOpen(v);
+          if (v) setActiveTab('current'); // Reset to current tab when opening
+        }}
       >
         {children}
       </Popover>
