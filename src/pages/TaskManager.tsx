@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   Table, Tag, Switch, Button, Space, Input, Select, Drawer, Form,
   Card, message, Popconfirm, Tooltip, Tabs, Timeline, Empty, Badge,
-  Collapse, Divider,
+  Collapse, Divider, List, Segmented, Alert, InputNumber,
 } from 'antd';
 import {
   PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined,
@@ -10,7 +10,8 @@ import {
   HistoryOutlined, EyeOutlined, RedoOutlined, UserOutlined,
   AppstoreOutlined, AimOutlined, DesktopOutlined, CloudOutlined,
   ClockCircleOutlined, ApiOutlined, FileTextOutlined, LinkOutlined,
-  MessageOutlined, SendOutlined,
+  MessageOutlined, SendOutlined, BookOutlined, ToolOutlined,
+  QuestionCircleOutlined,
 } from '@ant-design/icons';
 import {
   getTasks, createTask, updateTask, toggleTask, deleteTask, generateTaskDef,
@@ -52,19 +53,23 @@ interface AIEmployee {
 function groupByEmployee(tasks: AITask[]): AIEmployee[] {
   const map = new Map<string, AIEmployee>();
   for (const t of tasks) {
-    const key = t.name; // employee identity = name (unique in seed data)
+    const key = t.name;
     if (!map.has(key)) {
       map.set(key, {
         key,
         name: t.name,
         avatar: t.avatar || '🤖',
         avatar_color: t.avatar_color || '#8b5cf6',
-        description: t.description,
+        description: '',
         tasks: [],
         enabled: t.enabled,
       });
     }
     map.get(key)!.tasks.push(t);
+  }
+  // Description = summary of task actions
+  for (const emp of map.values()) {
+    emp.description = emp.tasks.map(t => t.description).join(' · ');
   }
   return Array.from(map.values());
 }
@@ -153,15 +158,26 @@ export default function TaskManager() {
       setEditingTask(firstTask);
       form.setFieldsValue({
         name: emp.name,
+        nickname: emp.name, // display name
         avatar: emp.avatar,
         avatar_color: emp.avatar_color,
+        position: emp.description,
         description: emp.description,
+        greeting: `你好！我是${emp.name}，有什么可以帮你的？`,
         tags: firstTask?.tags || [],
         prompt_system: firstTask?.prompt_system || '',
+        enableKnowledgeBase: false,
+        topK: 5,
+        score: 0.5,
       });
     } else {
       setEditingTask(null);
       form.resetFields();
+      form.setFieldsValue({
+        enableKnowledgeBase: false,
+        topK: 5,
+        score: 0.5,
+      });
     }
     setDrawerOpen(true);
   };
@@ -398,13 +414,14 @@ export default function TaskManager() {
                     <Button size="small" icon={<PlusOutlined />} onClick={() => {
                       setSelectedEmployee(selEmp.key);
                       openTaskEditor();
-                    }}>新建任务</Button>
+                    }}>添加任务</Button>
                   </Space>
                 </div>
               </Card>
 
-              {/* Task templates */}
-              <Card size="small" title={<Space><AppstoreOutlined /> 任务模板 ({selEmp.tasks.length})</Space>}
+              {/* Task configs — NocoBase style shortcut tasks */}
+              <Card size="small" title={<Space><AppstoreOutlined /> 任务配置 ({selEmp.tasks.length})</Space>}
+                extra={<span style={{ fontSize: 11, color: '#999' }}>联动规则 / 页面快捷方式中配置的任务</span>}
                 style={{ marginBottom: 12 }}>
                 {selEmp.tasks.map(task => (
                   <div key={task.id} style={{
@@ -424,11 +441,11 @@ export default function TaskManager() {
                         onClick={(_, e) => e.stopPropagation()}
                         onChange={checked => handleToggle(task.id, checked)} />
                       <Space size={2}>
-                        <Tooltip title="编辑模板"><Button size="small" type="text" icon={<EditOutlined />}
+                        <Tooltip title="编辑"><Button size="small" type="text" icon={<EditOutlined />}
                           onClick={e => { e.stopPropagation(); openTaskEditor(task); }} /></Tooltip>
                         <Tooltip title="复制"><Button size="small" type="text" icon={<CopyOutlined />}
                           onClick={e => { e.stopPropagation(); handleDuplicate(task); }} /></Tooltip>
-                        <Popconfirm title="确认删除此任务模板？" onConfirm={() => handleDelete(task.id)}>
+                        <Popconfirm title="确认删除此任务？" onConfirm={() => handleDelete(task.id)}>
                           <Button size="small" type="text" danger icon={<DeleteOutlined />}
                             onClick={e => e.stopPropagation()} />
                         </Popconfirm>
@@ -614,7 +631,7 @@ export default function TaskManager() {
       </div>
 
       <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>
-        管理 AI 员工（身份 + 角色设定）和任务模板（Prompt + 输入输出）。一个员工可有多个任务模板，触发和动作由联动规则/工作流配置。
+        管理 AI 员工和任务配置。联动规则/页面快捷方式中选择员工，任务在员工上内联配置（标题、背景指令、默认消息、技能子集）。
       </div>
 
       {/* Filters */}
@@ -641,7 +658,7 @@ export default function TaskManager() {
           },
           {
             key: 'tasks',
-            label: <Space><AppstoreOutlined /> 全部任务模板 ({tasks.length})</Space>,
+            label: <Space><AppstoreOutlined /> 全部任务配置 ({tasks.length})</Space>,
             children: (
               <Table dataSource={tasks} columns={taskColumns} rowKey="id" size="small"
                 loading={loading} pagination={false} />
@@ -653,187 +670,397 @@ export default function TaskManager() {
       {/* Task/Employee Edit Drawer */}
       <Drawer
         title={drawerMode === 'employee'
-          ? (editingTask ? `编辑员工: ${editingTask.name}` : '新建 AI 员工')
-          : (editingTask ? `编辑任务模板: ${editingTask.action}` : '新建任务模板')
+          ? (editingTask ? `编辑 AI 员工: ${editingTask.name}` : '新建 AI 员工')
+          : (editingTask ? `编辑任务: ${editingTask.description || editingTask.action}` : '添加任务')
         }
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
-        width={640}
+        width={drawerMode === 'employee' ? 680 : 640}
         extra={<Button type="primary" onClick={handleSave}
           style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}>保存</Button>}
       >
         {drawerMode === 'employee' ? (
-          /* ---- Employee Editor ---- */
+          /* ---- Employee Editor (NocoBase style: 4-tab layout) ---- */
           <Form form={form} layout="vertical" size="small">
-            <Card size="small" title="员工身份" style={{ marginBottom: 16 }}>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <div>
-                  <Form.Item name="avatar" label="头像" style={{ marginBottom: 8 }}>
-                    <Select style={{ width: 70 }} options={
-                      ['🌐','🏷️','🚦','✍️','📚','🔍','📧','💰','😊','🛡️','🤖','💡','📊','🎯','📝','⚡','🔬','📋'].map(e => ({ value: e, label: e }))
-                    } />
-                  </Form.Item>
-                  <Form.Item name="avatar_color" label="颜色" style={{ marginBottom: 0 }}>
-                    <Select style={{ width: 70 }} options={[
-                      { value: '#8b5cf6', label: '🟣' }, { value: '#1677ff', label: '🔵' },
-                      { value: '#52c41a', label: '🟢' }, { value: '#fa541c', label: '🟠' },
-                      { value: '#f5222d', label: '🔴' }, { value: '#722ed1', label: '💜' },
-                      { value: '#13c2c2', label: '🩵' }, { value: '#eb2f96', label: '💗' },
-                      { value: '#faad14', label: '🟡' },
+            <Tabs size="small" items={[
+              {
+                key: 'profile',
+                label: <Space><UserOutlined /> 基本信息</Space>,
+                children: (
+                  <div style={{ padding: '12px 0' }}>
+                    <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
+                      <div>
+                        <Form.Item name="avatar" label="头像" style={{ marginBottom: 8 }}>
+                          <Select style={{ width: 70 }} options={
+                            ['🌐','🏷️','🚦','✍️','📚','🔍','📧','💰','😊','🛡️','🤖','💡','📊','🎯','📝','⚡','🔬','📋'].map(e => ({ value: e, label: e }))
+                          } />
+                        </Form.Item>
+                        <Form.Item name="avatar_color" label="颜色" style={{ marginBottom: 0 }}>
+                          <Select style={{ width: 70 }} options={[
+                            { value: '#8b5cf6', label: '🟣' }, { value: '#1677ff', label: '🔵' },
+                            { value: '#52c41a', label: '🟢' }, { value: '#fa541c', label: '🟠' },
+                            { value: '#f5222d', label: '🔴' }, { value: '#722ed1', label: '💜' },
+                            { value: '#13c2c2', label: '🩵' }, { value: '#eb2f96', label: '💗' },
+                            { value: '#faad14', label: '🟡' },
+                          ]} />
+                        </Form.Item>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <Form.Item name="name" label="用户名" rules={[{ required: true }]} style={{ marginBottom: 8 }}
+                          extra={editingTask ? '用户名创建后不可修改' : undefined}>
+                          <Input placeholder="如：translator" disabled={!!editingTask} />
+                        </Form.Item>
+                        <Form.Item name="nickname" label="昵称" style={{ marginBottom: 0 }}>
+                          <Input placeholder="如：翻译专员" />
+                        </Form.Item>
+                      </div>
+                    </div>
+                    <Form.Item name="position" label="职位" style={{ marginBottom: 12 }}
+                      extra="在 AI 员工列表中展示的简要定位">
+                      <Input placeholder="如：多语言翻译 · 商务文档 · 本地化" />
+                    </Form.Item>
+                    <Form.Item name="description" label="简介 (Bio)" style={{ marginBottom: 12 }}>
+                      <TextArea rows={2} placeholder="介绍这个 AI 员工的能力和擅长领域" />
+                    </Form.Item>
+                    <Form.Item name="greeting" label="问候语" style={{ marginBottom: 12 }}
+                      extra="用户首次与该员工对话时的开场白">
+                      <TextArea rows={2} placeholder="如：你好！我是翻译专员，可以帮你翻译各种语言的文档。" />
+                    </Form.Item>
+                    <Form.Item name="tags" label="标签" style={{ marginBottom: 0 }}>
+                      <Select mode="tags" placeholder="输入标签回车添加" />
+                    </Form.Item>
+                  </div>
+                ),
+              },
+              {
+                key: 'role',
+                label: <Space><FileTextOutlined /> 角色设定</Space>,
+                children: (
+                  <div style={{ padding: '12px 0' }}>
+                    <Alert message="角色设定定义了 AI 员工的行为规范和专业领域。此设定会作为 System Prompt 应用于该员工的所有任务。支持使用变量引用当前用户、角色和语言。"
+                      type="info" showIcon style={{ marginBottom: 16, fontSize: 12 }} />
+                    <Form.Item name="prompt_system" label="角色设定" style={{ marginBottom: 0 }}>
+                      <TextArea rows={12} placeholder={`你是一名专业的翻译助手。\n\n## 规则\n- 保持术语准确、语句自然\n- 不添加原文没有的内容\n- 保留原文格式\n\n## 变量\n- 当前用户: {{currentUser.nickname}}\n- 当前语言: {{currentLang}}`}
+                        style={{ fontFamily: 'monospace', fontSize: 12 }} />
+                    </Form.Item>
+                  </div>
+                ),
+              },
+              {
+                key: 'skills',
+                label: <Space><ToolOutlined /> 技能</Space>,
+                children: (
+                  <div style={{ padding: '12px 0' }}>
+                    <Collapse ghost size="small" defaultActiveKey={[]} items={[
+                      {
+                        key: 'general',
+                        label: (
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 12 }}>通用技能</div>
+                            <div style={{ color: '#999', fontSize: 11 }}>所有 AI 员工共享，只读</div>
+                          </div>
+                        ),
+                        children: (
+                          <List size="small" dataSource={[
+                            { name: 'send-message', title: '发送消息', desc: '向用户发送文本消息和通知', perm: 'ALLOW' },
+                            { name: 'suggestions', title: '操作建议', desc: '根据上下文向用户推荐下一步操作', perm: 'ALLOW' },
+                          ]} renderItem={(item) => (
+                            <List.Item extra={
+                              <span style={{ fontSize: 11, color: '#999' }}>
+                                权限 <Segmented size="small" options={[{ label: '询问', value: 'ASK' }, { label: '允许', value: 'ALLOW' }]}
+                                  value={item.perm} disabled style={{ marginLeft: 4 }} />
+                              </span>
+                            }>
+                              <div style={{ fontSize: 12 }}>{item.title}</div>
+                              <div style={{ fontSize: 11, color: '#999' }}>{item.desc}</div>
+                            </List.Item>
+                          )} />
+                        ),
+                      },
                     ]} />
-                  </Form.Item>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <Form.Item name="name" label="员工名" rules={[{ required: true }]} style={{ marginBottom: 8 }}>
-                    <Input placeholder="如：翻译专员" />
-                  </Form.Item>
-                  <Form.Item name="description" label="一句话描述" style={{ marginBottom: 0 }}>
-                    <Input placeholder="如：将任意语言文本翻译为目标语言" />
-                  </Form.Item>
-                </div>
-              </div>
-              <Form.Item name="tags" label="标签" style={{ marginBottom: 0, marginTop: 8 }}>
-                <Select mode="tags" placeholder="输入标签回车添加" />
-              </Form.Item>
-            </Card>
-            <Card size="small" title="角色设定" style={{ marginBottom: 16 }}
-              extra={<span style={{ fontSize: 11, color: '#999' }}>此员工所有任务共享的 System Prompt</span>}>
-              <Form.Item name="prompt_system" label="System Prompt" style={{ marginBottom: 0 }}>
-                <TextArea rows={4} placeholder="你是一个专业翻译，确保术语准确、语句自然。"
-                  style={{ fontFamily: 'monospace', fontSize: 12 }} />
-              </Form.Item>
-            </Card>
+                    <Collapse ghost size="small" defaultActiveKey={['custom']} style={{ marginTop: 8 }}
+                      items={[{
+                        key: 'custom',
+                        label: (
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 12 }}>自定义技能</div>
+                            <div style={{ color: '#999', fontSize: 11 }}>通过工作流创建，可添加/删除和设置默认权限</div>
+                          </div>
+                        ),
+                        extra: (
+                          <Button size="small" type="primary" icon={<PlusOutlined />}
+                            onClick={e => { e.stopPropagation(); message.info('可在工作流中创建自定义技能后添加到此处'); }}>
+                            添加技能
+                          </Button>
+                        ),
+                        children: (() => {
+                          // Mock custom tools aligned with NocoBase tool system
+                          const customTools = [
+                            { name: 'form-filler', title: '表单填充', desc: '根据上下文自动填写表单字段', perm: 'ASK' as const },
+                            { name: 'data-query', title: '数据查询', desc: '查询数据表并返回结构化结果', perm: 'ASK' as const },
+                            { name: 'chart-generator', title: '图表生成', desc: '根据数据自动生成可视化图表', perm: 'ASK' as const },
+                            { name: 'define-collections', title: '数据建模', desc: '创建和修改数据表结构定义', perm: 'ASK' as const },
+                          ];
+                          return (
+                            <List size="small" bordered dataSource={customTools} renderItem={(tool) => (
+                              <List.Item extra={
+                                <Space>
+                                  <span style={{ fontSize: 11 }}>
+                                    权限 <Segmented size="small" style={{ marginLeft: 4, marginRight: 4 }}
+                                      options={[{ label: '询问', value: 'ASK' }, { label: '允许', value: 'ALLOW' }]}
+                                      value={tool.perm} />
+                                  </span>
+                                  <Button size="small" type="text" icon={<DeleteOutlined />}
+                                    onClick={() => message.info('演示模式')} />
+                                </Space>
+                              }>
+                                <div style={{ fontSize: 12 }}>{tool.title}</div>
+                                <div style={{ fontSize: 11, color: '#999' }}>{tool.desc}</div>
+                              </List.Item>
+                            )} />
+                          );
+                        })(),
+                      }]}
+                    />
+                  </div>
+                ),
+              },
+              {
+                key: 'context',
+                label: <Space><AppstoreOutlined /> 上下文</Space>,
+                children: (
+                  <div style={{ padding: '12px 0' }}>
+                    <Alert message="上下文定义了 AI 员工可访问的数据范围。配置的数据源会在对话时自动注入，AI 可基于这些数据进行分析和操作。"
+                      type="info" showIcon style={{ marginBottom: 16, fontSize: 12 }} />
+
+                    <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 8 }}>工作上下文</div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+                      {[
+                        { key: 'flow-model', label: '页面区块', desc: '当前页面的区块和表单数据' },
+                        { key: 'datasource', label: '数据源', desc: '配置的数据表记录' },
+                        { key: 'code-editor', label: '代码编辑器', desc: '代码片段上下文' },
+                        { key: 'chart-config', label: '图表配置', desc: '可视化图表的查询和配置' },
+                      ].map(ctx => (
+                        <Card key={ctx.key} size="small" hoverable style={{ width: 'calc(50% - 4px)', cursor: 'default' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                              <div style={{ fontSize: 12, fontWeight: 500 }}>{ctx.label}</div>
+                              <div style={{ fontSize: 11, color: '#999' }}>{ctx.desc}</div>
+                            </div>
+                            <Switch size="small" defaultChecked={ctx.key === 'flow-model' || ctx.key === 'datasource'} />
+                          </div>
+                        </Card>
+                      ))}
+                    </div>
+
+                    <Divider style={{ margin: '12px 0' }} />
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: 12 }}>数据源配置</div>
+                        <div style={{ fontSize: 11, color: '#999' }}>指定 AI 可查询的数据表、字段范围和过滤条件</div>
+                      </div>
+                      <Button size="small" icon={<PlusOutlined />}
+                        onClick={() => message.info('数据源配置向导：选择数据表 → 字段 → 过滤条件 → 排序 → 预览')}>
+                        添加数据源
+                      </Button>
+                    </div>
+                    {(() => {
+                      const emp = editingTask ? employees.find(e => e.key === editingTask.name) : null;
+                      const mockDS = emp ? [
+                        { title: '工单数据', collection: 'tickets', fields: 6, limit: 50, enabled: true },
+                        { title: '客户资料', collection: 'customers', fields: 8, limit: 100, enabled: true },
+                      ] : [];
+                      return mockDS.length > 0 ? (
+                        <List size="small" bordered dataSource={mockDS} renderItem={(ds) => (
+                          <List.Item extra={
+                            <Space>
+                              <Switch size="small" defaultChecked={ds.enabled} />
+                              <Button size="small" type="text" icon={<DeleteOutlined />} />
+                            </Space>
+                          }>
+                            <div>
+                              <div style={{ fontSize: 12, fontWeight: 500 }}>{ds.title}</div>
+                              <div style={{ fontSize: 11, color: '#999' }}>
+                                {ds.collection} · {ds.fields} 字段 · 限制 {ds.limit} 条
+                              </div>
+                            </div>
+                          </List.Item>
+                        )} />
+                      ) : (
+                        <Empty description="暂无数据源配置" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                      );
+                    })()}
+                  </div>
+                ),
+              },
+              {
+                key: 'knowledge',
+                label: <Space><BookOutlined /> 知识库</Space>,
+                children: (
+                  <div style={{ padding: '12px 0' }}>
+                    <Form.Item name="enableKnowledgeBase" label="启用知识库" valuePropName="checked" style={{ marginBottom: 16 }}>
+                      <Switch />
+                    </Form.Item>
+                    <Form.Item name="knowledgeBasePrompt" label="知识库 Prompt" style={{ marginBottom: 16 }}
+                      extra="引导 AI 如何使用检索到的知识库内容">
+                      <TextArea rows={3} placeholder="请根据以下知识库内容回答用户的问题。如果知识库中没有相关信息，请如实告知。"
+                        style={{ fontFamily: 'monospace', fontSize: 12 }} />
+                    </Form.Item>
+                    <Form.Item name="knowledgeBaseIds" label="知识库" style={{ marginBottom: 12 }}
+                      extra="选择该员工可以访问的知识库">
+                      <Select mode="multiple" placeholder="选择知识库" options={[
+                        { value: 'kb-product', label: '产品文档' },
+                        { value: 'kb-faq', label: '常见问题' },
+                        { value: 'kb-policy', label: '政策规范' },
+                        { value: 'kb-cases', label: '历史案例' },
+                      ]} />
+                    </Form.Item>
+                    <div style={{ display: 'flex', gap: 16 }}>
+                      <Form.Item name="topK" label="Top K" style={{ marginBottom: 0, flex: 1 }}
+                        extra="返回最相关的文档数量">
+                        <InputNumber min={1} max={100} style={{ width: '100%' }} placeholder="5" />
+                      </Form.Item>
+                      <Form.Item name="score" label="最低相关度" style={{ marginBottom: 0, flex: 1 }}
+                        extra="0-1，越高越严格">
+                        <InputNumber min={0} max={1} step={0.1} style={{ width: '100%' }} placeholder="0.5" />
+                      </Form.Item>
+                    </div>
+                  </div>
+                ),
+              },
+            ]} />
           </Form>
         ) : (
-          /* ---- Task Template Editor ---- */
+          /* ---- Task Editor (flat form) ---- */
           <Form form={form} layout="vertical" size="small">
-            {/* AI Generate */}
+            {/* AI Generate — only for new */}
             {!editingTask && (
-              <Card size="small" style={{
-                marginBottom: 16, background: '#faf8ff',
-                borderLeft: '3px solid #8b5cf6', borderColor: '#e9e0ff',
-              }}>
-                <div style={{ fontSize: 12, color: '#8b5cf6', fontWeight: 600, marginBottom: 8 }}>
-                  <ThunderboltOutlined /> AI 智能填充 — 用一句话描述你想要的任务
-                </div>
+              <div style={{ marginBottom: 12, padding: '8px 12px', background: '#faf8ff', borderLeft: '3px solid #8b5cf6', borderRadius: 4 }}>
                 <Space.Compact style={{ width: '100%' }}>
-                  <Input
-                    value={aiDesc}
-                    onChange={e => setAiDesc(e.target.value)}
-                    placeholder="如：将客户邮件翻译为中文，保持商务格式"
-                    onPressEnter={handleAIGenerate}
-                  />
+                  <Input value={aiDesc} onChange={e => setAiDesc(e.target.value)}
+                    placeholder="一句话描述，AI 自动生成配置" onPressEnter={handleAIGenerate} />
                   <Button type="primary" loading={aiGenerating} onClick={handleAIGenerate}
-                    style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}>
-                    AI 生成
+                    icon={<ThunderboltOutlined />} style={{ background: '#8b5cf6', borderColor: '#8b5cf6' }}>
+                    生成
                   </Button>
                 </Space.Compact>
-              </Card>
+              </div>
             )}
 
-            {/* Employee identity (part of task) */}
-            <Card size="small" title="所属员工" style={{ marginBottom: 16 }}>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <div>
-                  <Form.Item name="avatar" label="头像" style={{ marginBottom: 8 }}>
-                    <Select style={{ width: 70 }} options={
-                      ['🌐','🏷️','🚦','✍️','📚','🔍','📧','💰','😊','🛡️','🤖','💡','📊','🎯','📝','⚡','🔬','📋'].map(e => ({ value: e, label: e }))
-                    } />
-                  </Form.Item>
-                  <Form.Item name="avatar_color" label="颜色" style={{ marginBottom: 0 }}>
-                    <Select style={{ width: 70 }} options={[
-                      { value: '#8b5cf6', label: '🟣' }, { value: '#1677ff', label: '🔵' },
-                      { value: '#52c41a', label: '🟢' }, { value: '#fa541c', label: '🟠' },
-                      { value: '#f5222d', label: '🔴' }, { value: '#722ed1', label: '💜' },
-                      { value: '#13c2c2', label: '🩵' }, { value: '#eb2f96', label: '💗' },
-                      { value: '#faad14', label: '🟡' },
-                    ]} />
-                  </Form.Item>
+            {/* 归属 — 所属员工 */}
+            {selectedEmployee && (() => {
+              const emp = employees.find(e => e.key === selectedEmployee);
+              return emp ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#fafafa', borderRadius: 6, marginBottom: 12 }}>
+                  <AIAvatar avatar={emp.avatar} color={emp.avatar_color} size={32} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>{emp.name}</div>
+                    <div style={{ fontSize: 11, color: '#999' }}>{emp.description}</div>
+                  </div>
                 </div>
-                <div style={{ flex: 1 }}>
-                  <Form.Item name="name" label="员工名" rules={[{ required: true }]} style={{ marginBottom: 8 }}>
-                    <Input placeholder="如：翻译专员" />
-                  </Form.Item>
-                  <Form.Item name="description" label="一句话能力" style={{ marginBottom: 0 }}>
-                    <Input placeholder="如：将任意语言文本翻译为目标语言" />
-                  </Form.Item>
-                </div>
-              </div>
-            </Card>
+              ) : null;
+            })()}
 
-            {/* Task Prompt */}
-            <Card size="small" title="任务指令" style={{ marginBottom: 16 }}>
-              <Form.Item name="action" label="能力类型" style={{ marginBottom: 12 }}>
-                <Select options={[
-                  { value: 'translate', label: 'translate — 翻译' },
-                  { value: 'classify', label: 'classify — 分类' },
-                  { value: 'fill', label: 'fill — 填充' },
-                  { value: 'extract', label: 'extract — 提取' },
-                  { value: 'generate', label: 'generate — 生成' },
-                  { value: 'validate', label: 'validate — 校验' },
-                  { value: 'summarize', label: 'summarize — 摘要' },
-                  { value: 'decide', label: 'decide — 决策' },
-                  { value: 'investigate', label: 'investigate — 调查' },
-                  { value: 'orchestrate', label: 'orchestrate — 编排' },
-                ]} />
-              </Form.Item>
-              <Form.Item name="prompt_system" label="角色设定 (System Prompt)" style={{ marginBottom: 12 }}
-                extra="定义角色和专业领域">
-                <TextArea rows={3} placeholder="你是一个专业翻译，确保术语准确、语句自然。"
-                  style={{ fontFamily: 'monospace', fontSize: 12 }} />
-              </Form.Item>
-              <Form.Item name="prompt_template" label="任务指令 (User Prompt 模板)" rules={[{ required: true }]}
-                extra={<span>使用 <code>{'{{field}}'}</code> 引用上下文字段</span>}>
-                <TextArea rows={8} placeholder="将以下文本翻译为{{target_lang}}，只输出翻译结果：&#10;&#10;{{content}}"
-                  style={{ fontFamily: 'monospace', fontSize: 12 }} />
-              </Form.Item>
-            </Card>
+            {/* 标题 */}
+            <Form.Item name="description" label="标题" rules={[{ required: true }]} style={{ marginBottom: 8 }}>
+              <Input placeholder="如：翻译客户邮件" />
+            </Form.Item>
 
-            {/* Input / Output */}
-            <Card size="small" title="数据映射" style={{ marginBottom: 16 }}>
-              <Form.Item name="input_fields" label="输入字段" style={{ marginBottom: 8 }}
-                extra="逗号分隔，运行时从触发上下文中获取">
+            {/* 提示词 */}
+            <Form.Item name="prompt_template" label="提示词" rules={[{ required: true }]} style={{ marginBottom: 8 }}
+              extra={<span style={{ fontSize: 11 }}>用 <code>{'{{field}}'}</code> 引用输入字段</span>}>
+              <TextArea rows={5} placeholder="将以下内容翻译为{{target_lang}}：&#10;&#10;{{content}}"
+                style={{ fontFamily: 'monospace', fontSize: 12 }} />
+            </Form.Item>
+
+            {/* 输入 / 输出 */}
+            <div style={{ display: 'flex', gap: 12, marginBottom: 4 }}>
+              <Form.Item name="input_fields" label="输入" style={{ marginBottom: 8, flex: 1 }}>
                 <Input placeholder="content, target_lang" />
               </Form.Item>
-              <Form.Item name="output_fields" label="输出字段" style={{ marginBottom: 8 }}
-                extra="逗号分隔">
-                <Input placeholder="language, translated_content" />
+              <Form.Item name="output_fields" label="输出" style={{ marginBottom: 8, flex: 1 }}>
+                <Input placeholder="translated_content" />
               </Form.Item>
-              <Form.Item name="output_format" label="输出格式" style={{ marginBottom: 0 }}>
-                <Select options={[
-                  { value: 'text', label: 'text — 纯文本' },
-                  { value: 'json', label: 'json — JSON 结构' },
+            </div>
+
+            {/* 技能 */}
+            <Form.Item name="skill_filter" label="技能" style={{ marginBottom: 8 }}
+              extra="限定可用技能，留空则使用员工全部技能">
+              <Select mode="multiple" placeholder="全部技能" allowClear
+                options={[
+                  { value: 'form-filler', label: '表单填充' },
+                  { value: 'data-query', label: '数据查询' },
+                  { value: 'chart-generator', label: '图表生成' },
+                  { value: 'define-collections', label: '数据建模' },
+                ]} />
+            </Form.Item>
+
+            {/* 模型 + 类型/标签 */}
+            <div style={{ display: 'flex', gap: 12, marginBottom: 4 }}>
+              <Form.Item name="model_tier" label="模型" style={{ marginBottom: 8, width: 140 }}>
+                <Select allowClear placeholder="默认" options={[
+                  { value: 'lite', label: 'Lite 轻量' },
+                  { value: 'fast', label: 'Fast 平衡' },
+                  { value: 'pro', label: 'Pro 最强' },
                 ]} />
               </Form.Item>
-            </Card>
+              <Form.Item name="action" label="类型" style={{ marginBottom: 8, width: 120 }}>
+                <Select options={[
+                  { value: 'translate', label: '翻译' }, { value: 'classify', label: '分类' },
+                  { value: 'fill', label: '填充' }, { value: 'extract', label: '提取' },
+                  { value: 'generate', label: '生成' }, { value: 'validate', label: '校验' },
+                  { value: 'summarize', label: '摘要' }, { value: 'decide', label: '决策' },
+                  { value: 'investigate', label: '调查' }, { value: 'orchestrate', label: '编排' },
+                ]} />
+              </Form.Item>
+              <Form.Item name="tags" label="标签" style={{ marginBottom: 8, flex: 1 }}>
+                <Select mode="tags" placeholder="回车添加" />
+              </Form.Item>
+            </div>
 
-            {/* Config */}
-            <Card size="small" title="执行配置" style={{ marginBottom: 16 }}>
-              <Space wrap>
-                <Form.Item name="model_tier" label="模型等级" style={{ marginBottom: 0 }}>
-                  <Select style={{ width: 200 }} options={[
-                    { value: 'lite', label: 'Lite — 最快, 分类/标签/判断' },
-                    { value: 'fast', label: 'Fast — 平衡, 翻译/摘要/生成' },
-                    { value: 'pro', label: 'Pro — 最强, 复杂推理/编排' },
-                  ]} />
-                </Form.Item>
-                <Form.Item name="retry_count" label="重试" style={{ marginBottom: 0 }}>
-                  <Select style={{ width: 80 }}
-                    options={[0, 1, 2, 3].map(n => ({ value: n, label: `${n} 次` }))} />
-                </Form.Item>
-                <Form.Item name="timeout_ms" label="超时" style={{ marginBottom: 0 }}>
-                  <Select style={{ width: 80 }}
-                    options={[5000, 10000, 15000, 30000, 60000].map(n => ({ value: n, label: `${n / 1000}s` }))} />
-                </Form.Item>
-              </Space>
-              <Form.Item name="enabled" label="启用" valuePropName="checked" style={{ marginBottom: 0, marginTop: 8 }}>
+            {/* 背景指令 */}
+            <Form.Item name="prompt_system" label="背景指令" style={{ marginBottom: 8 }}
+              extra="追加到员工角色设定后，细化本任务行为。留空则继承员工设定">
+              <TextArea rows={3} placeholder="如：翻译时保持商务格式，保留专有名词不翻译"
+                style={{ fontFamily: 'monospace', fontSize: 12 }} />
+            </Form.Item>
+
+            <Divider style={{ margin: '8px 0', fontSize: 12, color: '#999' }} plain>执行配置</Divider>
+
+            {/* 触发 + 输出格式 */}
+            <div style={{ display: 'flex', gap: 12, marginBottom: 4 }}>
+              <Form.Item name="trigger_type" label="触发" style={{ marginBottom: 8, flex: 1 }}>
+                <Select placeholder="选择触发方式" options={[
+                  { value: 'field_focus', label: '字段聚焦' },
+                  { value: 'text_select', label: '选中文字' },
+                  { value: 'button', label: '按钮点击' },
+                  { value: 'context_menu', label: '右键菜单' },
+                  { value: 'record_event', label: '记录事件' },
+                  { value: 'schedule', label: '定时任务' },
+                  { value: 'workflow', label: '工作流节点' },
+                ]} />
+              </Form.Item>
+              <Form.Item name="output_format" label="输出格式" style={{ marginBottom: 8, width: 110 }}>
+                <Select options={[{ value: 'text', label: '纯文本' }, { value: 'json', label: 'JSON' }]} />
+              </Form.Item>
+            </div>
+
+            {/* 重试 + 超时 + 联网 + 启用 */}
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <Form.Item name="retry_count" label="重试" style={{ marginBottom: 0, width: 80 }}>
+                <Select options={[0, 1, 2, 3].map(n => ({ value: n, label: `${n} 次` }))} />
+              </Form.Item>
+              <Form.Item name="timeout_ms" label="超时" style={{ marginBottom: 0, width: 90 }}>
+                <Select options={[5000, 10000, 15000, 30000, 60000].map(n => ({ value: n, label: `${n / 1000}s` }))} />
+              </Form.Item>
+              <Form.Item name="web_search" label="联网搜索" valuePropName="checked" style={{ marginBottom: 0 }}>
+                <Switch size="small" />
+              </Form.Item>
+              <Form.Item name="enabled" label="启用" valuePropName="checked" style={{ marginBottom: 0 }}>
                 <Switch />
               </Form.Item>
-            </Card>
-
-            <Form.Item name="tags" label="标签" style={{ marginBottom: 0 }}>
-              <Select mode="tags" placeholder="输入标签回车添加" />
-            </Form.Item>
+            </div>
           </Form>
         )}
       </Drawer>
